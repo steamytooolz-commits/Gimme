@@ -1,0 +1,1363 @@
+package com.example.ui.viewmodel
+
+import android.app.Application
+import android.util.Log
+import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.viewModelScope
+import androidx.room.Room
+import com.example.api.LlmClient
+import com.example.api.ToolCall
+import com.example.data.local.ThemisDatabase
+import com.example.data.repository.GameRepository
+import com.example.data.repository.SecureStorageRepository
+import com.example.data.model.*
+import com.example.domain.ContextAssemblerUseCase
+import com.example.domain.AppellateReviewUseCase
+import com.squareup.moshi.Moshi
+import com.squareup.moshi.Types
+import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.launch
+import java.util.UUID
+
+// --- MVI Intents ---
+sealed interface ThemisIntent {
+    data class SendMessage(val text: String) : ThemisIntent
+    data object ResetGame : ThemisIntent
+    data class ChangePhase(val phase: GamePhase) : ThemisIntent
+    data class ResolveObjection(val sustain: Boolean) : ThemisIntent
+    data class IssueVerdict(val suspectId: String, val convict: Boolean) : ThemisIntent
+    data class GenerateNewCase(val params: CaseGenerationParameters) : ThemisIntent
+    data object ToggleWarrant : ThemisIntent
+    data class SelectNpc(val npcId: String?) : ThemisIntent
+
+    // Phase 3 Dossier & Pre-Trial Hearing Intents
+    data class ToggleEvidenceSelection(val evidenceId: String) : ThemisIntent
+    data class CreateEvidenceLink(val sourceId: String, val targetId: String, val relationshipType: RelationshipType, val justification: String) : ThemisIntent
+    data object OpenDossierBuilder : ThemisIntent
+    data object CloseDossierBuilder : ThemisIntent
+    data object GeneratePreTrialMotions : ThemisIntent
+    data class RuleOnPreTrialMotion(val motionId: String, val sustain: Boolean) : ThemisIntent
+    data object ProceedToCourtroomFromHearing : ThemisIntent
+    
+    // Phase 6 Cold Case Intents
+    data class ReopenColdCase(val caseId: String) : ThemisIntent
+}
+
+// --- Active Objection State ---
+data class ObjectionState(
+    val type: ObjectionType,
+    val witnessName: String,
+    val description: String
+)
+
+// --- Combined UI State ---
+data class ThemisUiState(
+    val currentPhase: GamePhase = GamePhase.INVESTIGATION,
+    val currentTime: String = "Day 1, 10:00 AM",
+    val evidenceList: List<EvidenceItem> = emptyList(),
+    val npcList: List<NPC> = emptyList(),
+    val chatMessages: List<ChatMessage> = emptyList(),
+    val conflictOfInterest: Int = 15, // Recusal meter: 0 to 100. Loose at 100.
+    val hasSearchWarrantActive: Boolean = false, // Warrants prevent procedural violations
+    val selectedNpcId: String? = null,
+    val activeObjection: ObjectionState? = null,
+    val isLoading: Boolean = false,
+    val errorMessage: String? = null,
+    val trialVerdict: String? = null,
+
+    // Phase 3 Dossier & Pre-Trial Hearing state
+    val selectedEvidenceIds: Set<String> = emptySet(),
+    val evidenceLinks: List<EvidenceLink> = emptyList(),
+    val dossierMarkdown: String = "",
+    val preTrialMotions: List<PreTrialMotion> = emptyList(),
+    val isDossierBuilderActive: Boolean = false,
+    val isPreTrialHearingActive: Boolean = false,
+
+    // Phase 4 Dynamic & Appellate state
+    val activeCaseId: String = "default_case",
+    val caseGroundTruth: CaseGroundTruth? = null,
+    val evaluationReport: CaseEvaluationReport? = null,
+    val isGeneratingCase: Boolean = false,
+    val generationProgress: String = "",
+    val caseProgress: CaseProgress? = null,
+    val coldCaseArchive: List<CaseProgress> = emptyList()
+)
+
+
+class ThemisViewModel(
+    application: Application,
+    private val repository: GameRepository,
+    private val secureStorageRepository: SecureStorageRepository,
+    private val llmClient: LlmClient
+) : AndroidViewModel(application) {
+
+    private val moshi = Moshi.Builder().build()
+    private val contextAssembler = ContextAssemblerUseCase(repository)
+    private val appellateReviewUseCase = AppellateReviewUseCase(repository, secureStorageRepository, llmClient)
+    private val caseDecayUseCase = com.example.domain.CaseDecayUseCase(repository)
+
+    private val _uiState = MutableStateFlow(ThemisUiState())
+    val uiState: StateFlow<ThemisUiState> = _uiState.asStateFlow()
+
+    init {
+        // Observe all data flows from DB and combine them into UI State
+        viewModelScope.launch {
+            val existingCaseId = repository.getWorldState("active_case_id")
+            if (existingCaseId == null) {
+                repository.seedInitialData() // Seed default case if empty
+                repository.updateWorldState("active_case_id", "default_case")
+            }
+            
+            combine(
+                repository.allEvidence,
+                repository.allNpcs,
+                repository.chatMessages,
+                repository.allLinks
+            ) { evidence, npcs, messages, links ->
+                val phase = repository.getGamePhase()
+                val time = repository.getGameTime()
+                val coi = repository.getWorldState("conflict_of_interest")?.toIntOrNull() ?: 15
+                val caseId = repository.getWorldState("active_case_id") ?: "default_case"
+                val groundTruth = repository.getGroundTruth(caseId)
+                val evalReport = repository.getEvaluationReport(caseId)
+                
+                _uiState.value.copy(
+                    evidenceList = evidence,
+                    npcList = npcs,
+                    chatMessages = messages,
+                    evidenceLinks = links,
+                    currentPhase = phase,
+                    currentTime = time,
+                    conflictOfInterest = coi,
+                    activeCaseId = caseId,
+                    caseGroundTruth = groundTruth,
+                    evaluationReport = evalReport
+                )
+            }.collect { combinedState ->
+                _uiState.update { it.copy(
+                    evidenceList = combinedState.evidenceList,
+                    npcList = combinedState.npcList,
+                    chatMessages = combinedState.chatMessages,
+                    evidenceLinks = combinedState.evidenceLinks,
+                    currentPhase = combinedState.currentPhase,
+                    currentTime = combinedState.currentTime,
+                    conflictOfInterest = combinedState.conflictOfInterest,
+                    activeCaseId = combinedState.activeCaseId,
+                    caseGroundTruth = combinedState.caseGroundTruth,
+                    evaluationReport = combinedState.evaluationReport
+                ) }
+                refreshCaseProgress(combinedState.activeCaseId)
+            }
+        }
+    }
+
+
+    fun processIntent(intent: ThemisIntent) {
+        when (intent) {
+            is ThemisIntent.SendMessage -> handleSendMessage(intent.text)
+            ThemisIntent.ResetGame -> handleResetGame()
+            is ThemisIntent.ChangePhase -> handleChangePhase(intent.phase)
+            is ThemisIntent.ResolveObjection -> handleResolveObjection(intent.sustain)
+            is ThemisIntent.IssueVerdict -> handleIssueVerdict(intent.suspectId, intent.convict)
+            is ThemisIntent.GenerateNewCase -> handleGenerateNewCase(intent.params)
+            ThemisIntent.ToggleWarrant -> handleToggleWarrant()
+            is ThemisIntent.SelectNpc -> {
+                _uiState.update { it.copy(selectedNpcId = intent.npcId) }
+            }
+            is ThemisIntent.ToggleEvidenceSelection -> {
+                val currentSelected = _uiState.value.selectedEvidenceIds
+                val newSelected = if (intent.evidenceId in currentSelected) {
+                    currentSelected - intent.evidenceId
+                } else {
+                    currentSelected + intent.evidenceId
+                }
+                _uiState.update { it.copy(selectedEvidenceIds = newSelected) }
+            }
+            is ThemisIntent.CreateEvidenceLink -> {
+                viewModelScope.launch {
+                    val link = EvidenceLink(
+                        sourceEvidenceId = intent.sourceId,
+                        targetEvidenceId = intent.targetId,
+                        relationshipType = intent.relationshipType,
+                        magistrateJustification = intent.justification
+                    )
+                    repository.addLink(link)
+                }
+            }
+            ThemisIntent.OpenDossierBuilder -> {
+                _uiState.update { it.copy(isDossierBuilderActive = true) }
+            }
+            ThemisIntent.CloseDossierBuilder -> {
+                _uiState.update { it.copy(isDossierBuilderActive = false) }
+            }
+            ThemisIntent.GeneratePreTrialMotions -> {
+                handleGeneratePreTrialMotions()
+            }
+            is ThemisIntent.RuleOnPreTrialMotion -> {
+                handleRuleOnPreTrialMotion(intent.motionId, intent.sustain)
+            }
+            ThemisIntent.ProceedToCourtroomFromHearing -> {
+                handleProceedToCourtroomFromHearing()
+            }
+            is ThemisIntent.ReopenColdCase -> {
+                handleReopenColdCase(intent.caseId)
+            }
+        }
+    }
+
+    private fun handleToggleWarrant() {
+        val current = _uiState.value.hasSearchWarrantActive
+        _uiState.update { it.copy(hasSearchWarrantActive = !current) }
+        viewModelScope.launch {
+            val message = if (!current) {
+                "Active Search Warrant issued. Procedural integrity of searches is now guaranteed."
+            } else {
+                "Search Warrant retracted. Future searches will operate under probable cause rules."
+            }
+            repository.insertMessage(
+                ChatMessage(
+                    id = UUID.randomUUID().toString(),
+                    phase = _uiState.value.currentPhase,
+                    sender = "System",
+                    text = message,
+                    isSystem = true
+                )
+            )
+        }
+    }
+
+    private fun handleResetGame() {
+        _uiState.update { ThemisUiState() }
+        viewModelScope.launch {
+            repository.seedInitialData()
+        }
+    }
+
+    private fun handleChangePhase(phase: GamePhase) {
+        viewModelScope.launch {
+            repository.setGamePhase(phase)
+            val transitionText = if (phase == GamePhase.COURTROOM) {
+                "The trial begins in the High Court of Themis. You take off your Detective hat and sit upon the Magistrate's Bench. You hold the Gavel."
+            } else {
+                "The Court adjourns. You return to the dark palace corridors to gather more evidence."
+            }
+            repository.insertMessage(
+                ChatMessage(
+                    id = UUID.randomUUID().toString(),
+                    phase = phase,
+                    sender = "System",
+                    text = transitionText,
+                    isSystem = true
+                )
+            )
+        }
+    }
+
+    private fun handleResolveObjection(sustain: Boolean) {
+        val active = _uiState.value.activeObjection ?: return
+        _uiState.update { it.copy(activeObjection = null) }
+
+        viewModelScope.launch {
+            val feedbackText = if (sustain) {
+                "You SUSTAINED the objection. The evidence/statement is excluded from the trial record. (Procedural integrity maintained)."
+            } else {
+                // Overruling an objection increases COI if the objection was valid (e.g. about inadmissible evidence)
+                val coiDelta = 15
+                val currentCoi = repository.getWorldState("conflict_of_interest")?.toIntOrNull() ?: 15
+                val newCoi = (currentCoi + coiDelta).coerceAtMost(100)
+                repository.updateWorldState("conflict_of_interest", newCoi.toString())
+                "You OVERRULED the objection. The Court allowed it, but the Defense records your procedural compromise. Conflict of Interest meter rose to $newCoi%."
+            }
+
+            repository.insertMessage(
+                ChatMessage(
+                    id = UUID.randomUUID().toString(),
+                    phase = GamePhase.COURTROOM,
+                    sender = "System",
+                    text = feedbackText,
+                    isSystem = true
+                )
+            )
+
+            // Feed the decision back to Gemini context
+            _uiState.update { it.copy(isLoading = true) }
+            val prompt = "Magistrate resolved the defense's objection for '${active.witnessName}' regarding '${active.type}'. The Magistrate chose to: ${if (sustain) "SUSTAIN (exclude statement/evidence)" else "OVERRULE (admit statement/evidence)"}. Respond as the Court Defense Attorney reactively in 1-2 lines."
+            
+            val gameResponse = llmClient.generateGameResponse(
+                systemInstruction = getSystemInstruction(),
+                history = buildGeminiHistory(prompt),
+                currentPhase = GamePhase.COURTROOM,
+                config = secureStorageRepository.getLlmConfig(),
+                apiKey = secureStorageRepository.getApiKey()
+            )
+
+            _uiState.update { it.copy(isLoading = false) }
+            repository.insertMessage(
+                ChatMessage(
+                    id = UUID.randomUUID().toString(),
+                    phase = GamePhase.COURTROOM,
+                    sender = "Defense Council",
+                    text = gameResponse.textResponse
+                )
+            )
+        }
+    }
+
+    private fun handleGeneratePreTrialMotions() {
+        viewModelScope.launch {
+            _uiState.update { it.copy(isLoading = true, errorMessage = null) }
+            val selectedIds = _uiState.value.selectedEvidenceIds.toList()
+            val markdown = contextAssembler.assembleTrialContext(selectedIds)
+            _uiState.update { it.copy(dossierMarkdown = markdown) }
+
+            val prompt = """
+                You are the AI Defense Attorney in the High Court of Themis.
+                Review the Magistrate's Case Dossier below. Your job is to identify weak semantic links, warrantless (unconstitutional) evidence seizures, or logical contradictions.
+                Generate up to 3 "Motions to Suppress Evidence" based on these flaws.
+                For each motion, specify:
+                - targetEvidenceId: The precise ID of the evidence item you are trying to suppress (must match an Item ID from the dossier, or a keyword like 'golden_goblet').
+                - targetEvidenceName: The name of that evidence item.
+                - argument: A highly persuasive, 2-3 sentence legal argument explaining why this item must be suppressed (procedural violations, weak relevance, missing warrant, or broken chain of custody).
+
+                Format your response strictly as a JSON list of motions. Do not include any markdown formatting or surrounding text, just raw JSON.
+                Example format:
+                [
+                  {
+                    "id": "motion_1",
+                    "targetEvidenceId": "golden_goblet",
+                    "targetEvidenceName": "The Golden Goblet",
+                    "argument": "The alchemical analysis was performed using an uncalibrated lens, and the chain of custody lists an anonymous clerk. This breaks proper validation of forensic integrity."
+                  }
+                ]
+            """.trimIndent()
+
+            try {
+                val response = llmClient.generateGameResponse(
+                    systemInstruction = "You are the Defense Attorney in 'Project Themis'. Review the evidence and generate JSON motions to suppress.",
+                    history = listOf("user" to "Here is the compiled dossier:\n\n$markdown\n\nGenerate the Motions to Suppress strictly as JSON."),
+                    currentPhase = GamePhase.COURTROOM,
+                    config = secureStorageRepository.getLlmConfig(),
+                    apiKey = secureStorageRepository.getApiKey()
+                )
+
+                val cleanJson = response.textResponse
+                    .substringAfter("[")
+                    .substringBeforeLast("]")
+                    .let { "[$it]" }
+                    .trim()
+
+                val motionsListType = Types.newParameterizedType(List::class.java, Map::class.java)
+                val adapter = moshi.adapter<List<Map<String, Any>>>(motionsListType)
+                val rawMotions = adapter.fromJson(cleanJson) ?: emptyList()
+
+                val parsedMotions = rawMotions.mapIndexed { idx, map ->
+                    PreTrialMotion(
+                        id = map["id"]?.toString() ?: "motion_${idx + 1}",
+                        targetEvidenceId = map["targetEvidenceId"]?.toString() ?: "",
+                        targetEvidenceName = map["targetEvidenceName"]?.toString() ?: "Evidence",
+                        argument = map["argument"]?.toString() ?: "Seized unlawfully.",
+                        ruled = false,
+                        sustained = null
+                    )
+                }
+
+                _uiState.update { it.copy(
+                    isLoading = false,
+                    preTrialMotions = parsedMotions,
+                    isPreTrialHearingActive = true
+                ) }
+
+                repository.insertMessage(
+                    ChatMessage(
+                        id = UUID.randomUUID().toString(),
+                        phase = GamePhase.INVESTIGATION,
+                        sender = "Defense Council",
+                        text = "I have filed ${parsedMotions.size} Motions to Suppress based on procedural irregularities and weak semantic justifications. Your Honor, you must rule upon them before we proceed.",
+                        isSystem = false
+                    )
+                )
+
+            } catch (e: Exception) {
+                // Fallback: generate motions based on actual warrantless searches
+                val fallbackMotions = mutableListOf<PreTrialMotion>()
+                val allEv = repository.allEvidence.first()
+                val selectedEv = allEv.filter { it.id in selectedIds }
+                
+                selectedEv.forEachIndexed { idx, item ->
+                    if (item.collectionContext.warrantUsed == null || item.admissibilityStatus == AdmissibilityStatus.INADMISSIBLE) {
+                        fallbackMotions.add(
+                            PreTrialMotion(
+                                id = "motion_${idx + 1}",
+                                targetEvidenceId = item.id,
+                                targetEvidenceName = item.name,
+                                argument = "This item was seized from '${item.collectionContext.locationFound}' by officer '${item.collectionContext.collectingOfficer}' without a valid judicial search warrant. This is a clear violation of Magistrate's procedural laws.",
+                                ruled = false,
+                                sustained = null
+                            )
+                        )
+                    }
+                }
+
+                if (fallbackMotions.isEmpty() && selectedEv.isNotEmpty()) {
+                    val item = selectedEv.first()
+                    fallbackMotions.add(
+                        PreTrialMotion(
+                            id = "motion_1",
+                            targetEvidenceId = item.id,
+                            targetEvidenceName = item.name,
+                            argument = "The semantic relevance of this evidence relies on purely speculative connections. The Magistrate has failed to establish a direct, unbreakable nexus of guilt.",
+                            ruled = false,
+                            sustained = null
+                        )
+                    )
+                }
+
+                _uiState.update { it.copy(
+                    isLoading = false,
+                    preTrialMotions = fallbackMotions,
+                    isPreTrialHearingActive = true
+                ) }
+
+                repository.insertMessage(
+                    ChatMessage(
+                        id = UUID.randomUUID().toString(),
+                        phase = GamePhase.INVESTIGATION,
+                        sender = "Defense Council",
+                        text = "I have filed ${fallbackMotions.size} Motions to Suppress regarding the procedural integrity of your dossier.",
+                        isSystem = false
+                    )
+                )
+            }
+        }
+    }
+
+    private fun handleRuleOnPreTrialMotion(motionId: String, sustain: Boolean) {
+        val updatedMotions = _uiState.value.preTrialMotions.map { motion ->
+            if (motion.id == motionId) {
+                motion.copy(ruled = true, sustained = sustain)
+            } else {
+                motion
+            }
+        }
+
+        val targetMotion = _uiState.value.preTrialMotions.find { it.id == motionId } ?: return
+        
+        val currentSelected = _uiState.value.selectedEvidenceIds
+        val newSelected = if (sustain) {
+            currentSelected - targetMotion.targetEvidenceId
+        } else {
+            currentSelected
+        }
+
+        _uiState.update { it.copy(
+            preTrialMotions = updatedMotions,
+            selectedEvidenceIds = newSelected
+        ) }
+
+        viewModelScope.launch {
+            val ruleText = if (sustain) "SUSTAINED" else "OVERRULED"
+            val explanation = if (sustain) {
+                "Motion to Suppress '${targetMotion.targetEvidenceName}' is GRANTED. The evidence is excluded from the trial context."
+            } else {
+                "Motion to Suppress '${targetMotion.targetEvidenceName}' is DENIED. The evidence is admitted over defense objection."
+            }
+            
+            repository.insertMessage(
+                ChatMessage(
+                    id = UUID.randomUUID().toString(),
+                    phase = GamePhase.INVESTIGATION,
+                    sender = "System",
+                    text = "Ruling on Motion: $ruleText. $explanation",
+                    isSystem = true
+                )
+            )
+
+            val newMarkdown = contextAssembler.assembleTrialContext(newSelected.toList())
+            _uiState.update { it.copy(dossierMarkdown = newMarkdown) }
+        }
+    }
+
+    private fun handleProceedToCourtroomFromHearing() {
+        _uiState.update { it.copy(
+            isPreTrialHearingActive = false,
+            isDossierBuilderActive = false,
+            currentPhase = GamePhase.COURTROOM
+        ) }
+
+        viewModelScope.launch {
+            repository.setGamePhase(GamePhase.COURTROOM)
+            repository.insertMessage(
+                ChatMessage(
+                    id = UUID.randomUUID().toString(),
+                    phase = GamePhase.COURTROOM,
+                    sender = "System",
+                    text = "Pre-Trial Hearing adjourned. The official trial of Duke Sterling's assassination begins. The Case Dossier has been officially locked and entered into evidence.",
+                    isSystem = true
+                )
+            )
+        }
+    }
+
+    private fun handleIssueVerdict(suspectId: String, convict: Boolean) {
+        viewModelScope.launch {
+            val npc = _uiState.value.npcList.find { it.id == suspectId } ?: return@launch
+            val verdict = if (convict) "CONVICTED" else "ACQUITTED"
+            val coreCrime = _uiState.value.caseGroundTruth?.coreCrime ?: "Duke Sterling's Murder"
+            
+            // Generate final judgment based on case facts
+            val factsText = buildString {
+                append("The Trial for '$coreCrime' has reached a final verdict. ")
+                append("The Magistrate has $verdict ${npc.name} (${npc.role}).\n")
+                append("Collected Admissible Evidence:\n")
+                _uiState.value.evidenceList.filter { it.admissibilityStatus == AdmissibilityStatus.ADMISSIBLE }.forEach {
+                    append("- ${it.name}: ${it.physicalDescription}\n")
+                }
+                append("\nCollected Inadmissible Evidence (procedural violations):\n")
+                _uiState.value.evidenceList.filter { it.admissibilityStatus == AdmissibilityStatus.INADMISSIBLE }.forEach {
+                    append("- ${it.name} (Seized at: ${it.collectionContext.locationFound}, warrant: ${it.collectionContext.warrantUsed ?: "None"})\n")
+                }
+                append("\nNPC Stress Levels:\n")
+                _uiState.value.npcList.forEach {
+                    append("- ${it.name}: ${it.stress}% stress\n")
+                }
+                append("\nConflict of Interest / Bias level: ${_uiState.value.conflictOfInterest}%\n")
+                append("\nBased on these facts, summarize the legal correctness, historical justice, and the reaction of the populace in 3-4 powerful, story-rich paragraphs. Evaluate if justice was truly served or if the wrong person was framed.")
+            }
+
+            _uiState.update { it.copy(isLoading = true) }
+            val response = try {
+                llmClient.generateGameResponse(
+                    systemInstruction = "You are the High Chancellor of the Court of Themis. Issue the final legal decree summarizing the Magistrate's judgment based on the legal evidence and procedures used.",
+                    history = listOf("user" to factsText),
+                    currentPhase = GamePhase.COURTROOM,
+                    config = secureStorageRepository.getLlmConfig(),
+                    apiKey = secureStorageRepository.getApiKey()
+                )
+            } catch (e: Exception) {
+                com.example.api.GeminiResponse(
+                    textResponse = "We, the High Chancellor of the Court of Themis, record this final verdict. The Magistrate has decreed $verdict for ${npc.name}. Let this judgment be written into the annals of our history.",
+                    parsedToolCalls = emptyList<com.example.api.ToolCall>()
+                )
+            }
+
+            repository.insertMessage(
+                ChatMessage(
+                    id = UUID.randomUUID().toString(),
+                    phase = GamePhase.COURTROOM,
+                    sender = "Chancellor's Decree",
+                    text = response.textResponse,
+                    isSystem = true
+                )
+            )
+
+            // Trigger Appellate Evaluation
+            val report = appellateReviewUseCase.evaluatePerformance(
+                caseId = _uiState.value.activeCaseId,
+                targetSuspectId = suspectId,
+                wasConvicted = convict,
+                conflictOfInterest = _uiState.value.conflictOfInterest,
+                selectedEvidenceIds = _uiState.value.selectedEvidenceIds
+            )
+
+            _uiState.update { it.copy(
+                isLoading = false,
+                trialVerdict = response.textResponse,
+                evaluationReport = report
+            ) }
+        }
+    }
+
+    private fun handleSendMessage(userText: String) {
+        if (userText.trim().isEmpty()) return
+
+        val phase = _uiState.value.currentPhase
+        val isWarrantActive = _uiState.value.hasSearchWarrantActive
+        
+        if (phase == GamePhase.INVESTIGATION) {
+            useLead()
+        }
+        
+        viewModelScope.launch {
+            // Save user message
+            repository.insertMessage(
+                ChatMessage(
+                    id = UUID.randomUUID().toString(),
+                    phase = phase,
+                    sender = "Player",
+                    text = userText
+                )
+            )
+
+            _uiState.update { it.copy(isLoading = true, errorMessage = null) }
+
+            // Build system prompt and context history for Gemini
+            val systemInstruction = getSystemInstruction()
+            val history = buildGeminiHistory(userText)
+
+            try {
+                val response = llmClient.generateGameResponse(
+                    systemInstruction = systemInstruction,
+                    history = history,
+                    currentPhase = phase,
+                    config = secureStorageRepository.getLlmConfig(),
+                    apiKey = secureStorageRepository.getApiKey()
+                )
+                
+                _uiState.update { it.copy(isLoading = false) }
+
+                // Save LLM's conversational text response
+                if (response.textResponse.isNotEmpty()) {
+                    val senderName = _uiState.value.selectedNpcId?.let { id ->
+                        _uiState.value.npcList.find { it.id == id }?.name
+                    } ?: "Game Master"
+                    
+                    repository.insertMessage(
+                        ChatMessage(
+                            id = UUID.randomUUID().toString(),
+                            phase = phase,
+                            sender = senderName,
+                            text = response.textResponse
+                        )
+                    )
+                }
+
+                // Execute parsed tool calls
+                executeToolCalls(response.parsedToolCalls, isWarrantActive)
+
+            } catch (e: Exception) {
+                _uiState.update { it.copy(
+                    isLoading = false,
+                    errorMessage = "Failed to compile response: ${e.localizedMessage}"
+                ) }
+            }
+        }
+    }
+
+    private suspend fun executeToolCalls(toolCalls: List<ToolCall>, isWarrantActive: Boolean) {
+        for (tool in toolCalls) {
+            // Log tool execution as a system message
+            repository.insertMessage(
+                ChatMessage(
+                    id = UUID.randomUUID().toString(),
+                    phase = _uiState.value.currentPhase,
+                    sender = "System",
+                    text = "[TOOL: Executing ${tool.name}]",
+                    isSystem = true,
+                    isToolCall = true,
+                    toolName = tool.name
+                )
+            )
+
+            when (tool.name) {
+                "advance_time" -> {
+                    val hours = (tool.args["hours"] as? Double)?.toInt() ?: 1
+                    val reason = tool.args["reason"] as? String ?: "Investigation"
+                    
+                    // Increment time logic
+                    val currentTime = repository.getGameTime()
+                    val nextTime = advanceTimeStr(currentTime, hours)
+                    repository.setGameTime(nextTime)
+
+                    // Check if day changed
+                    try {
+                        val currentDayNum = currentTime.substringBefore(",").filter { it.isDigit() }.toIntOrNull() ?: 1
+                        val nextDayNum = nextTime.substringBefore(",").filter { it.isDigit() }.toIntOrNull() ?: 1
+                        val dayDiff = nextDayNum - currentDayNum
+                        if (dayDiff > 0) {
+                            val currentProgress = _uiState.value.caseProgress
+                            if (currentProgress != null && currentProgress.status == CaseStatus.ACTIVE) {
+                                val nextDays = currentProgress.daysElapsed + dayDiff
+                                val nextPressure = (currentProgress.publicPressure + 0.1f * dayDiff).coerceAtMost(1.0f)
+                                val updatedProgress = currentProgress.copy(
+                                    daysElapsed = nextDays,
+                                    publicPressure = nextPressure
+                                )
+                                viewModelScope.launch {
+                                    repository.insertCaseProgress(updatedProgress)
+                                    _uiState.update { it.copy(caseProgress = updatedProgress) }
+                                    checkGoingCold(updatedProgress)
+                                }
+                            }
+                        }
+                    } catch (e: Exception) {
+                        Log.e("ThemisViewModel", "Failed to parse day transition: ${e.message}")
+                    }
+
+                    repository.insertMessage(
+                        ChatMessage(
+                            id = UUID.randomUUID().toString(),
+                            phase = _uiState.value.currentPhase,
+                            sender = "System",
+                            text = "Time Advanced: +$hours hour(s) due to '$reason'. Now: $nextTime",
+                            isSystem = true
+                        )
+                    )
+                }
+                "add_evidence" -> {
+                    val id = tool.args["id"] as? String ?: UUID.randomUUID().toString()
+                    val name = tool.args["name"] as? String ?: "Unnamed Clue"
+                    val physicalDescription = tool.args["description"] as? String ?: "No description provided."
+                    val forensicReport = tool.args["forensic_report"] as? String ?: "Initial forensic evaluation is pending."
+                    val location = tool.args["location"] as? String ?: "Palace Chambers"
+                    
+                    // Check if warrant was active. If not, evidence is poisoned fruit!
+                    val isAdmissible = isWarrantActive
+                    val status = if (isAdmissible) AdmissibilityStatus.ADMISSIBLE else AdmissibilityStatus.INADMISSIBLE
+
+                    val evidence = EvidenceItem(
+                        id = id,
+                        name = name,
+                        physicalDescription = physicalDescription,
+                        forensicReport = forensicReport,
+                        collectionContext = CollectionContext(
+                            locationFound = location,
+                            collectingOfficer = "Magistrate",
+                            timestamp = System.currentTimeMillis(),
+                            warrantUsed = if (isWarrantActive) "WARRANT_ACT" else null
+                        ),
+                        userAnnotations = "",
+                        admissibilityStatus = status
+                    )
+
+                    repository.addEvidence(evidence)
+
+                    val statusMsg = if (isAdmissible) {
+                        "Evidence Added: '$name' (Admissible in court)."
+                    } else {
+                        // Increase COI due to warrantless search
+                        val currentCoi = repository.getWorldState("conflict_of_interest")?.toIntOrNull() ?: 15
+                        val newCoi = (currentCoi + 10).coerceAtMost(100)
+                        repository.updateWorldState("conflict_of_interest", newCoi.toString())
+                        "Procedural Warning: '$name' collected without a Search Warrant! Evidence flagged as Inadmissible under 'Fruit of the Poisonous Tree' doctrine. Bias meter increased."
+                    }
+
+                    repository.insertMessage(
+                        ChatMessage(
+                            id = UUID.randomUUID().toString(),
+                            phase = _uiState.value.currentPhase,
+                            sender = "System",
+                            text = statusMsg,
+                            isSystem = true
+                        )
+                    )
+                }
+                "modify_npc_stress" -> {
+                    val npcId = tool.args["npc_id"] as? String ?: ""
+                    val delta = (tool.args["delta"] as? Double)?.toInt() ?: 0
+                    
+                    if (npcId.isNotEmpty() && delta != 0) {
+                        repository.updateNpcStress(npcId, delta)
+                        val npcName = _uiState.value.npcList.find { it.id == npcId }?.name ?: npcId
+                        repository.insertMessage(
+                            ChatMessage(
+                                id = UUID.randomUUID().toString(),
+                                phase = _uiState.value.currentPhase,
+                                sender = "System",
+                                text = "$npcName's anxiety level shifted by $delta%.",
+                                isSystem = true
+                            )
+                        )
+                    }
+                }
+                "trigger_objection" -> {
+                    val typeStr = tool.args["type"] as? String ?: "HEARSAY"
+                    val target = tool.args["target_witness"] as? String ?: "Witness"
+                    
+                    val type = try {
+                        ObjectionType.valueOf(typeStr.uppercase())
+                    } catch (e: Exception) {
+                        ObjectionType.HEARSAY
+                    }
+
+                    _uiState.update {
+                        it.copy(
+                            activeObjection = ObjectionState(
+                                type = type,
+                                witnessName = target,
+                                description = "The defense objects to this line of inquiry/evidence presentation as $type."
+                            )
+                        )
+                    }
+
+                    repository.insertMessage(
+                        ChatMessage(
+                            id = UUID.randomUUID().toString(),
+                            phase = GamePhase.COURTROOM,
+                            sender = "System",
+                            text = "⚠️ DEFENSE OBJECTION: $type regarding witness $target!",
+                            isSystem = true
+                        )
+                    )
+                }
+                "update_world_state" -> {
+                    val key = tool.args["key"] as? String ?: ""
+                    val value = tool.args["value"]?.toString() ?: ""
+                    if (key.isNotEmpty()) {
+                        repository.updateWorldState(key, value)
+                    }
+                }
+            }
+        }
+    }
+
+    private fun advanceTimeStr(current: String, hoursToAdd: Int): String {
+        // e.g. "Day 1, 10:00 AM" -> "Day 1, 12:00 PM"
+        try {
+            val parts = current.split(", ")
+            val dayPart = parts[0] // "Day 1"
+            val timePart = parts[1] // "10:00 AM"
+            val timeSplit = timePart.split(" ")
+            val hourMin = timeSplit[0].split(":")
+            var hour = hourMin[0].toInt()
+            val min = hourMin[1]
+            var amPm = timeSplit[1]
+
+            hour += hoursToAdd
+            while (hour >= 12) {
+                if (hour > 12) {
+                    hour -= 12
+                }
+                amPm = if (amPm == "AM") "PM" else "AM"
+                if (amPm == "AM") {
+                    // Went fully around to next day
+                    val dayNum = dayPart.filter { it.isDigit() }.toInt() + 1
+                    return "Day $dayNum, $hour:$min $amPm"
+                }
+                if (hour == 12 && amPm == "PM") {
+                    // special break
+                    break
+                }
+            }
+            return "$dayPart, $hour:$min $amPm"
+        } catch (e: Exception) {
+            return "Day 1, ${10 + hoursToAdd}:00 AM"
+        }
+    }
+
+    private fun getSystemInstruction(): String {
+        val selectedNpc = _uiState.value.selectedNpcId?.let { id ->
+            _uiState.value.npcList.find { it.id == id }
+        }
+        
+        return buildString {
+            append("You are the AI Game Director for 'Project Themis', a grim, noir text-based detective-magistrate simulation game set in a renaissance-like Palace.\n")
+            append("The current game phase is: ${_uiState.value.currentPhase.name}.\n")
+            append("Current time in-game: ${_uiState.value.currentTime}.\n")
+            append("Current search warrant status: ${if (_uiState.value.hasSearchWarrantActive) "ACTIVE (searches are procedural)" else "INACTIVE (searches violate procedure unless stated)"}.\n\n")
+            
+            val progress = _uiState.value.caseProgress
+            if (progress != null && progress.degradationLevel > 0) {
+                append("⚠️ COLD CASE DEGRADATION ACTIVE (Level ${progress.degradationLevel}) ⚠️\n")
+                append("This investigation went cold some days ago and is now reopened under Cold Case protocols.\n")
+                append("Witnesses are highly forgetful, evasive, or hostile due to memory fade. Physical evidence is severely compromised or degraded.\n")
+                append("If the player interrogates witnesses or asks about degraded items, respond indicating that their memories are foggy, the chain of custody was broken, or samples are contaminated. Play along with this severe handicap.\n\n")
+            }
+            
+            append("SUSPECTS:\n")
+            _uiState.value.npcList.forEach {
+                append("- ID: ${it.id}, Name: ${it.name}, Role: ${it.role}, Stress: ${it.stress}%, Hidden Motive: ${it.hiddenMotive}\n")
+            }
+            
+            append("\nCOLLECTED EVIDENCE:\n")
+            _uiState.value.evidenceList.forEach {
+                append("- '${it.name}': ${it.physicalDescription} (Admissible Status: ${it.admissibilityStatus.name}, Found: ${it.collectionContext.locationFound})\n")
+            }
+            
+            if (_uiState.value.currentPhase == GamePhase.COURTROOM && _uiState.value.dossierMarkdown.isNotEmpty()) {
+                append("\n=== LOCK BOX: OFFICIAL CASE DOSSIER ===\n")
+                append(_uiState.value.dossierMarkdown)
+                append("\n========================================\n")
+                append("CRITICAL COURTROOM RULE: The AI Defense Attorney is strictly forbidden from knowing or hallucinating any connection between evidence items unless it was explicitly introduced in the dossier above via EvidenceLinks. Any suppressed or inadmissible evidence is completely redacted and must not be used against suspects.\n\n")
+            }
+
+            append("\nGAME MECHANICS & TOOL CALLING RULES:\n")
+            append("You must NEVER mutate the state directly. You MUST request mutations using specific system tags.\n")
+            append("Format tool calls exactly like this inside your response, appending it at the very end of your response:\n")
+            append("[TOOL_CALL: {\"name\": \"tool_name\", \"args\": {\"arg1\": \"val1\"}}]\n\n")
+            
+            append("Available Tools:\n")
+            append("1. advance_time(hours: Int, reason: String) - Use when searching or when interrogation gets exhaustive.\n")
+            append("2. add_evidence(id: String, name: String, description: String, forensic_report: String, location: String) - Trigger when the player successfully uncovers a new clue by searching desk or chambers.\n")
+            append("3. modify_npc_stress(npc_id: String, delta: Int) - Delta can be negative or positive.\n")
+            append("4. trigger_objection(type: String, target_witness: String) - Only allowed in COURTROOM phase. Types: HEARSAY, LEADING, IRRELEVANT, SPECULATION.\n")
+            append("5. update_world_state(key: String, value: String) - Set flags for plot points.\n\n")
+
+            if (selectedNpc != null) {
+                append("ROLEPLAY DIRECTIVE:\n")
+                append("The user is currently communicating with ${selectedNpc.name}. Speak directly in first-person as ${selectedNpc.name} based on their profile and stress level.\n")
+                append("Their hidden motives: ${selectedNpc.hiddenMotive}. If stress is > 75%, they will break and reveal crucial clues or partial confessions, but if stress is low they will lie, smugly deny, or act grief-stricken.\n")
+            } else {
+                append("ROLEPLAY DIRECTIVE:\n")
+                append("The user is asking the court room or general palace environment. Speak as the Court Clerk, Herald, or the general narrator. Describe dramatic atmosphere, legal gravity, or suspect reactions.\n")
+            }
+
+            append("\nEnsure your responses are highly immersive, dramatic, and relatively brief (1-3 paragraphs) to fit a terminal layout. Do not write markdown files or bulleted outlines of responses, respond in-character! Always include the tool calls at the end of the response when appropriate.")
+        }
+    }
+
+    private fun buildGeminiHistory(latestMessage: String): List<Pair<String, String>> {
+        val history = mutableListOf<Pair<String, String>>()
+        // Use last 10 messages to avoid token window clutter, filtering system messages which are internal
+        val filtered = _uiState.value.chatMessages
+            .filter { !it.isSystem && !it.isToolCall }
+            .takeLast(8)
+
+        filtered.forEach { msg ->
+            val role = if (msg.sender == "Player") "user" else "model"
+            history.add(role to "${msg.sender}: ${msg.text}")
+        }
+
+        // Add the latest prompt if not already in message list (to prevent duplication)
+        if (filtered.lastOrNull()?.text != latestMessage) {
+            history.add("user" to "Player: $latestMessage")
+        }
+
+        return history
+    }
+
+    private fun handleGenerateNewCase(params: CaseGenerationParameters) {
+        viewModelScope.launch {
+            _uiState.update { it.copy(isGeneratingCase = true, errorMessage = null, generationProgress = "Clearing courtroom database...") }
+            
+            // 1. Clear case data
+            repository.clearCaseData()
+            
+            val caseId = UUID.randomUUID().toString()
+            repository.updateWorldState("active_case_id", caseId)
+            repository.setGamePhase(GamePhase.INVESTIGATION)
+            repository.setGameTime("Day 1, 10:00 AM")
+            repository.updateWorldState("conflict_of_interest", "15")
+
+            val apiKey = secureStorageRepository.getApiKey()
+            val config = secureStorageRepository.getLlmConfig()
+
+            // See if we have any closed cases to link to
+            val allDigests = repository.getAllColdCaseDigests()
+            val coldCaseDigest = if (allDigests.isNotEmpty()) allDigests.random() else null
+
+            val pipeline = com.example.domain.WorldGenesisPipeline(llmClient, com.example.domain.WorldBibleValidator())
+            val result = pipeline.generateWorldBible(
+                params = params,
+                apiKey = apiKey,
+                config = config,
+                coldCaseDigest = coldCaseDigest,
+                onProgress = { msg -> _uiState.update { it.copy(generationProgress = msg) } }
+            )
+            
+            val bible = result.getOrNull()
+            
+            if (bible != null) {
+                // Populate DB with Bible
+                _uiState.update { it.copy(generationProgress = "Seeding game world database from Bible...") }
+
+                val groundTruth = bible.groundTruth.copy(caseId = caseId)
+                repository.insertGroundTruth(groundTruth)
+
+                // NPCs
+                val npcEntities = bible.characters.values.map { char ->
+                    com.example.data.local.NpcEntity(
+                        id = char.id,
+                        name = char.name,
+                        role = char.role,
+                        stress = 20,
+                        statement = char.alibi.claimedWhereabouts,
+                        profile = "Personality: ${char.personality.speechPattern}. Stability: ${char.personality.emotionalStability}",
+                        hiddenMotive = char.hiddenKnowledge.joinToString("; ")
+                    )
+                }
+                repository.insertNpcs(npcEntities)
+
+                // Evidence
+                bible.physicalEvidenceMap.values.forEach { ev ->
+                    val item = EvidenceItem(
+                        id = ev.id,
+                        name = "Item ${ev.id}",
+                        physicalDescription = "Found at ${ev.locationId}",
+                        forensicReport = ev.forensicAnalysis.text,
+                        collectionContext = CollectionContext(
+                            locationFound = ev.locationId,
+                            collectingOfficer = "Magistrate",
+                            timestamp = System.currentTimeMillis(),
+                            warrantUsed = if (ev.discoveryCondition.warrantRequired) "WARRANT_001" else null
+                        ),
+                        userAnnotations = "",
+                        admissibilityStatus = AdmissibilityStatus.UNVERIFIED
+                    )
+                    repository.addEvidence(item)
+                }
+                
+                bible.digitalEvidenceMap.values.forEach { ev ->
+                    val item = EvidenceItem(
+                        id = ev.id,
+                        name = ev.type,
+                        physicalDescription = "Digital extraction from ${ev.sourceDeviceName}",
+                        forensicReport = ev.decryptedContent,
+                        collectionContext = CollectionContext(
+                            locationFound = "Cyber Division",
+                            collectingOfficer = "IT Support",
+                            timestamp = System.currentTimeMillis(),
+                            warrantUsed = null
+                        ),
+                        userAnnotations = "",
+                        admissibilityStatus = AdmissibilityStatus.UNVERIFIED
+                    )
+                    repository.addEvidence(item)
+                }
+
+                repository.insertMessage(
+                    ChatMessage(
+                        id = UUID.randomUUID().toString(),
+                        phase = GamePhase.INVESTIGATION,
+                        sender = "System",
+                        text = "The world of ${bible.meta.setting.name} has been generated. The crime: ${groundTruth.coreCrime}. Let the investigation begin.",
+                        isSystem = true
+                    )
+                )
+                
+                if (coldCaseDigest != null) {
+                    repository.insertMessage(
+                        ChatMessage(
+                            id = UUID.randomUUID().toString(),
+                            phase = GamePhase.INVESTIGATION,
+                            sender = "System",
+                            text = "META-LINK DETECTED: This case contains threads tying back to Cold Case ${coldCaseDigest.originalCaseId}. Remain vigilant.",
+                            isSystem = true
+                        )
+                    )
+                    repository.insertLinkage(
+                        CaseLinkage(
+                            activeCaseId = caseId,
+                            coldCaseId = coldCaseDigest.originalCaseId,
+                            connectionType = ConnectionType.CONTINUING_ENTERPRISE,
+                            description = "AI determined thematic or character linkage to cold case."
+                        )
+                    )
+                }
+
+                // Create and Insert Case Progress
+                val initialProgress = CaseProgress(
+                    caseId = caseId,
+                    status = CaseStatus.ACTIVE,
+                    daysElapsed = 1,
+                    maxDaysBeforeCold = when (params.complexityLevel) {
+                        1 -> 10
+                        2 -> 14
+                        3 -> 18
+                        4 -> 24
+                        else -> 30
+                    },
+                    activeLeadsRemaining = when (params.complexityLevel) {
+                        1 -> 15
+                        2 -> 20
+                        3 -> 25
+                        4 -> 30
+                        else -> 35
+                    },
+                    publicPressure = 0.0f,
+                    degradationLevel = 0
+                )
+                repository.insertCaseProgress(initialProgress)
+
+                _uiState.update { it.copy(
+                    isGeneratingCase = false,
+                    generationProgress = "",
+                    activeCaseId = caseId,
+                    caseGroundTruth = groundTruth,
+                    caseProgress = initialProgress,
+                    evaluationReport = null,
+                    trialVerdict = null,
+                    errorMessage = null
+                ) }
+                return@launch
+            } else {
+                _uiState.update { it.copy(generationProgress = "AI generation failed. Seeding immersive offline case...") }
+            }
+
+            // Offline Fallback Seeding
+            _uiState.update { it.copy(generationProgress = "Building offline case parameters...") }
+            val offlineCase = generateOfflineCase(params)
+
+            // Insert Ground Truth
+            val groundTruth = CaseGroundTruth(
+                caseId = caseId,
+                archetype = params.archetype,
+                coreCrime = offlineCase.coreCrime,
+                absoluteTruth = offlineCase.absoluteTruth,
+                suspectCulpabilities = offlineCase.suspectCulpabilities,
+                criticalMissableClues = offlineCase.criticalClues
+            )
+            repository.insertGroundTruth(groundTruth)
+
+            // Insert NPCs
+            repository.insertNpcs(offlineCase.npcs)
+
+            // Insert Evidence
+            offlineCase.startingEvidence.forEach { entity ->
+                val item = EvidenceItem(
+                    id = entity.id,
+                    name = entity.name,
+                    physicalDescription = entity.physicalDescription,
+                    forensicReport = entity.forensicReport,
+                    collectionContext = CollectionContext(
+                        locationFound = entity.locationFound,
+                        collectingOfficer = entity.collectingOfficer,
+                        timestamp = entity.timestamp,
+                        warrantUsed = entity.warrantUsed
+                    ),
+                    userAnnotations = entity.userAnnotations,
+                    admissibilityStatus = try { AdmissibilityStatus.valueOf(entity.admissibilityStatus) } catch (e: Exception) { AdmissibilityStatus.UNVERIFIED }
+                )
+                repository.addEvidence(item)
+            }
+
+            // Welcome message
+            repository.insertMessage(
+                ChatMessage(
+                    id = UUID.randomUUID().toString(),
+                    phase = GamePhase.INVESTIGATION,
+                    sender = "System",
+                    text = offlineCase.welcomeMessage,
+                    isSystem = true
+                )
+            )
+
+            _uiState.update { it.copy(
+                isGeneratingCase = false,
+                generationProgress = "",
+                activeCaseId = caseId,
+                caseGroundTruth = groundTruth,
+                evaluationReport = null,
+                trialVerdict = null,
+                errorMessage = null
+            ) }
+
+            // Create and Insert Case Progress
+            val initialProgress = CaseProgress(
+                caseId = caseId,
+                status = CaseStatus.ACTIVE,
+                daysElapsed = 1,
+                maxDaysBeforeCold = when (params.complexityLevel) {
+                    1 -> 10
+                    2 -> 14
+                    3 -> 18
+                    4 -> 24
+                    else -> 30
+                },
+                activeLeadsRemaining = when (params.complexityLevel) {
+                    1 -> 15
+                    2 -> 20
+                    3 -> 25
+                    4 -> 30
+                    else -> 35
+                },
+                publicPressure = 0.0f,
+                degradationLevel = 0
+            )
+            repository.insertCaseProgress(initialProgress)
+
+            _uiState.update { it.copy(
+                caseProgress = initialProgress
+            ) }
+        }
+    }
+
+    private fun useLead() {
+        val currentProgress = _uiState.value.caseProgress ?: return
+        if (currentProgress.status != CaseStatus.ACTIVE) return
+        
+        val nextLeads = (currentProgress.activeLeadsRemaining - 1).coerceAtLeast(0)
+        val updatedProgress = currentProgress.copy(activeLeadsRemaining = nextLeads)
+        
+        viewModelScope.launch {
+            repository.insertCaseProgress(updatedProgress)
+            _uiState.update { it.copy(caseProgress = updatedProgress) }
+            checkGoingCold(updatedProgress)
+        }
+    }
+
+    private fun checkGoingCold(progress: CaseProgress) {
+        val sufficientEvidenceForArrest = _uiState.value.evidenceList.count { it.admissibilityStatus == AdmissibilityStatus.ADMISSIBLE } >= 2
+        
+        val isTimeExpired = progress.daysElapsed >= progress.maxDaysBeforeCold
+        val isLeadExhausted = progress.activeLeadsRemaining <= 0 && !sufficientEvidenceForArrest
+        
+        if (isTimeExpired || isLeadExhausted) {
+            val updatedProgress = progress.copy(status = CaseStatus.COLD)
+            viewModelScope.launch {
+                repository.insertCaseProgress(updatedProgress)
+                repository.setGamePhase(GamePhase.COLD)
+                
+                repository.insertMessage(
+                    ChatMessage(
+                        id = java.util.UUID.randomUUID().toString(),
+                        phase = GamePhase.COLD,
+                        sender = "System",
+                        text = "⚠️ CASE SUSPENDED - COLD ⚠️\n\nThe investigation has exceeded the allotted time or exhausted all viable leads without sufficient admissible evidence for arrest. The case files have been suspended and moved to the Cold Case Archive.",
+                        isSystem = true
+                    )
+                )
+                
+                // Refresh UI State
+                val caseId = repository.getWorldState("active_case_id") ?: "default_case"
+                refreshCaseProgress(caseId)
+            }
+        }
+    }
+
+    private fun refreshCaseProgress(caseId: String) {
+        viewModelScope.launch {
+            val progress = repository.getCaseProgress(caseId) ?: run {
+                val defaultProgress = CaseProgress(
+                    caseId = caseId,
+                    status = CaseStatus.ACTIVE,
+                    daysElapsed = 1,
+                    maxDaysBeforeCold = 14,
+                    activeLeadsRemaining = 15,
+                    publicPressure = 0.0f,
+                    degradationLevel = 0
+                )
+                repository.insertCaseProgress(defaultProgress)
+                defaultProgress
+            }
+            
+            val allProgress = repository.getAllCaseProgress()
+            val archive = allProgress.filter { it.status == CaseStatus.COLD }
+            
+            _uiState.update { it.copy(
+                caseProgress = progress,
+                coldCaseArchive = archive
+            ) }
+        }
+    }
+
+    private fun handleReopenColdCase(caseId: String) {
+        viewModelScope.launch {
+            _uiState.update { it.copy(isLoading = true, errorMessage = null) }
+            
+            // Re-open case via Decay UseCase
+            val progress = caseDecayUseCase.applyDecayToCase(caseId, 65) // Simulating 65 days cold
+            
+            if (progress != null) {
+                repository.updateWorldState("active_case_id", caseId)
+                repository.setGamePhase(GamePhase.INVESTIGATION)
+                
+                repository.insertMessage(
+                    ChatMessage(
+                        id = java.util.UUID.randomUUID().toString(),
+                        phase = GamePhase.INVESTIGATION,
+                        sender = "System",
+                        text = "⚖️ CASE REOPENED FROM ARCHIVE ⚖️\n\nThis cold case has been reopened. Note that severe evidence degradation and witness amnesia have set in. The suspect may have fled the jurisdiction.",
+                        isSystem = true
+                    )
+                )
+                
+                refreshCaseProgress(caseId)
+            } else {
+                _uiState.update { it.copy(isLoading = false, errorMessage = "Failed to reopen cold case progress.") }
+            }
+        }
+    }
+
+    private fun generateOfflineCase(params: CaseGenerationParameters): CaseGenerationResult {
+        val caseId = UUID.randomUUID().toString()
+        val coreCrime: String
+        val absoluteTruth: String
+        val suspectCulpabilities: Map<String, CulpabilityStatus>
+        val criticalClues: List<String>
+        val npcs: List<com.example.data.local.NpcEntity>
+        val startingEvidence: List<com.example.data.local.EvidenceEntity>
+        val welcomeMessage: String
+
+        when (params.archetype) {
+            CaseArchetype.HOMICIDE -> {
+                coreCrime = "The assassination of a prominent figure in ${params.setting}."
+                absoluteTruth = "In a theme of ${params.tone}, the suspect Elena Cole orchestrated the assassination to cover up a betrayal. Clara served as an unaware pawn, while Marcus acted as an accessory after the fact."
+                suspectCulpabilities = mapOf(
+                    "elena" to CulpabilityStatus.PRINCIPAL,
+                    "clara" to CulpabilityStatus.UNAWARE_PAWN,
+                    "marcus" to CulpabilityStatus.ACCESSORY_AFTER_THE_FACT
+                )
+                criticalClues = listOf("poisoned_cup")
+                npcs = listOf(
+                    com.example.data.local.NpcEntity("elena", "Elena Cole", "Suspect (Business Partner)", 20, "I was in my office the entire evening. Silas was a close friend; I would never hurt him.", "A polished and powerful executive in ${params.setting}.", "She poisoned Silas's drink because he discovered her embezzlement of millions."),
+                    com.example.data.local.NpcEntity("clara", "Clara Sterling", "Witness (Secretary)", 45, "I brought Silas his coffee, just as Elena asked me to. I didn't see anything unusual!", "A young, anxious personal secretary.", "She has no idea that Elena slipped the poison into the coffee cup before she delivered it."),
+                    com.example.data.local.NpcEntity("marcus", "Marcus Vance", "Suspect (Security Chief)", 35, "Our security logs are clean. No unauthorized person entered Silas's private quarters.", "A stoic, disciplined chief of security.", "He discovered Elena's crime afterward but accepted a massive bribe to delete the security footage.")
+                )
+                startingEvidence = listOf(
+                    com.example.data.local.EvidenceEntity("poisoned_cup", "The Poisoned Coffee Cup", "A delicate ceramic cup containing coffee dregs with a faint bitter almond scent.", "Chemical residue reveals active cyanide compounds mixed into the beverage.", params.setting, "Magistrate", System.currentTimeMillis(), "WARRANT_001", "The primary delivery mechanism for the toxin.", "ADMISSIBLE"),
+                    com.example.data.local.EvidenceEntity("malware_log", "Altered Security Ledger", "A server backup disk labeled 'Sector 4 Vaults'.", "Diagnostic scans show the entry logs for the night of the crime were systematically deleted using an administrator key.", params.setting, "Officer Sterling", System.currentTimeMillis(), null, "Discovered in the trash bin near security desk. Warrantless grab.", "UNVERIFIED")
+                )
+                welcomeMessage = "A shocking assassination has occurred in ${params.setting}! Silas, a leading figure, was found dead at his desk. As the Magistrate, you must investigate the scene, interrogate Elena, Clara, and Marcus, and find the real culprit."
+            }
+            CaseArchetype.FINANCIAL_FRAUD -> {
+                coreCrime = "A multimillion-dollar ledger manipulation in ${params.setting}."
+                absoluteTruth = "Elena Cole embezzled the company treasury using Clara's terminal key to frame her. Marcus Vance discovered it but helped Elena hide it."
+                suspectCulpabilities = mapOf(
+                    "elena" to CulpabilityStatus.PRINCIPAL,
+                    "clara" to CulpabilityStatus.COMPLETELY_INNOCENT,
+                    "marcus" to CulpabilityStatus.ACCOMPLICE
+                )
+                criticalClues = listOf("ledger_audit")
+                npcs = listOf(
+                    com.example.data.local.NpcEntity("elena", "Elena Cole", "Suspect (CFO)", 15, "The audits are completely balanced. Clara is the only one who had access to the reserve ledger encryption keys.", "A sharp, brilliant Chief Financial Officer.", "Elena embezzled the funds to cover her gambling debts and framed Clara."),
+                    com.example.data.local.NpcEntity("clara", "Clara Sterling", "Suspect (Junior Auditor)", 60, "I swear I didn't authorize those wire transfers! My security card went missing for an hour last Tuesday!", "An extremely stressed junior accountant.", "She is completely innocent, Elena stole her card while she was at lunch."),
+                    com.example.data.local.NpcEntity("marcus", "Marcus Vance", "Witness (IT Director)", 30, "The server logs show Clara's login credentials were used for the ledger change.", "A quiet, calculating technical lead.", "He noticed the IP address matched Elena's office but altered the network logs in exchange for a partnership offer.")
+                )
+                startingEvidence = listOf(
+                    com.example.data.local.EvidenceEntity("ledger_audit", "The Ledger Audit Logs", "A printed sheet of financial logs showing the suspicious transaction.", "The log files indicate Clara's security card was used at 1:15 PM last Tuesday.", params.setting, "Magistrate", System.currentTimeMillis(), null, "Seized from IT room. Shows a clear timestamp matching Clara's lunch hour.", "UNVERIFIED")
+                )
+                welcomeMessage = "A massive financial treasury theft has been exposed in ${params.setting}! Over $50 million is missing from the vaults, and the audit logs point directly to Clara. Uncover the truth."
+            }
+            else -> {
+                coreCrime = "A mysterious occurrence in ${params.setting}."
+                absoluteTruth = "Elena Cole committed the offense under ${params.tone} circumstances, with Marcus assisting her and Clara caught in the middle."
+                suspectCulpabilities = mapOf(
+                    "elena" to CulpabilityStatus.PRINCIPAL,
+                    "marcus" to CulpabilityStatus.ACCOMPLICE,
+                    "clara" to CulpabilityStatus.COMPLETELY_INNOCENT
+                )
+                criticalClues = listOf("mystery_note")
+                npcs = listOf(
+                    com.example.data.local.NpcEntity("elena", "Elena Cole", "Suspect", 25, "I know nothing of this mystery.", "A mysterious persona.", "She is the mastermind behind the scheme."),
+                    com.example.data.local.NpcEntity("marcus", "Marcus Vance", "Suspect", 40, "I only followed Vance's orders.", "A trusted deputy.", "He assisted Elena in carrying out the operation."),
+                    com.example.data.local.NpcEntity("clara", "Clara Sterling", "Witness", 15, "I saw them meeting in secret near the back docks.", "A quiet observer.", "She is an innocent witness who saw too much.")
+                )
+                startingEvidence = listOf(
+                    com.example.data.local.EvidenceEntity("mystery_note", "A Mysterious Cipher", "A crumpled paper with strange markings.", "Decryption reveals details about a meeting at midnight.", params.setting, "Magistrate", System.currentTimeMillis(), "WARRANT_001", "Crucial timeline indicator.", "ADMISSIBLE")
+                )
+                welcomeMessage = "Welcome, Magistrate. A dark web of secrets has wrapped around ${params.setting} with a tone of ${params.tone}. Interrogate the suspects and unravel this mystery."
+            }
+        }
+
+        return CaseGenerationResult(caseId, coreCrime, absoluteTruth, suspectCulpabilities, criticalClues, npcs, startingEvidence, welcomeMessage)
+    }
+}
+
+data class CaseGenerationResult(
+    val caseId: String,
+    val coreCrime: String,
+    val absoluteTruth: String,
+    val suspectCulpabilities: Map<String, CulpabilityStatus>,
+    val criticalClues: List<String>,
+    val npcs: List<com.example.data.local.NpcEntity>,
+    val startingEvidence: List<com.example.data.local.EvidenceEntity>,
+    val welcomeMessage: String
+)
+
+// --- Factory ---
+class ThemisViewModelFactory(
+    private val application: Application,
+    private val repository: GameRepository,
+    private val secureStorageRepository: SecureStorageRepository,
+    private val llmClient: LlmClient
+) : ViewModelProvider.Factory {
+    override fun <T : ViewModel> create(modelClass: Class<T>): T {
+        if (modelClass.isAssignableFrom(ThemisViewModel::class.java)) {
+            @Suppress("UNCHECKED_CAST")
+            return ThemisViewModel(application, repository, secureStorageRepository, llmClient) as T
+        }
+        throw IllegalArgumentException("Unknown ViewModel class")
+    }
+}

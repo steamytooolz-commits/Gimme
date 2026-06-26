@@ -1,0 +1,6 @@
+{
+  "name": "Project Themis",
+  "description": "An LLM-powered inquisitorial detective and courtroom game. Inspect evidence, interrogate NPCs, and preside over the trial as the Investigating Magistrate.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
