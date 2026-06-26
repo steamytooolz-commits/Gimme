@@ -141,6 +141,54 @@ class GameRepository(val db: ThemisDatabase) {
         }
     }
 
+    suspend fun getAllMessagesDirect(): List<ChatMessage> {
+        return db.chatMessageDao().getAllMessagesDirect().map { entity ->
+            ChatMessage(
+                id = entity.id,
+                phase = if (entity.phaseName == GamePhase.COURTROOM.name) GamePhase.COURTROOM else GamePhase.INVESTIGATION,
+                sender = entity.sender,
+                text = entity.text,
+                timestamp = entity.timestamp,
+                isSystem = entity.isSystem,
+                isToolCall = entity.isToolCall,
+                toolName = entity.toolName
+            )
+        }
+    }
+
+    suspend fun getAllEvidenceDirect(): List<EvidenceItem> {
+        return db.evidenceDao().getEvidenceListDirect().map { entity ->
+            EvidenceItem(
+                id = entity.id,
+                name = entity.name,
+                physicalDescription = entity.physicalDescription,
+                forensicReport = entity.forensicReport,
+                collectionContext = CollectionContext(
+                    locationFound = entity.locationFound,
+                    collectingOfficer = entity.collectingOfficer,
+                    timestamp = entity.timestamp,
+                    warrantUsed = entity.warrantUsed
+                ),
+                userAnnotations = entity.userAnnotations,
+                admissibilityStatus = try { AdmissibilityStatus.valueOf(entity.admissibilityStatus) } catch (e: Exception) { AdmissibilityStatus.UNVERIFIED }
+            )
+        }
+    }
+
+    suspend fun getNpcsDirect(): List<NPC> {
+        return db.npcDao().getNpcListDirect().map { entity ->
+            NPC(
+                id = entity.id,
+                name = entity.name,
+                role = entity.role,
+                stress = entity.stress,
+                statement = entity.statement,
+                profile = entity.profile,
+                hiddenMotive = entity.hiddenMotive
+            )
+        }
+    }
+
     // --- Write Operations ---
 
     suspend fun addEvidence(evidence: EvidenceItem) {

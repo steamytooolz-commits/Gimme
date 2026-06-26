@@ -43,11 +43,10 @@ fun PreTrialHearingScreen(
             .fillMaxSize()
             .background(Color(0xFF0F0F11))
             .padding(16.dp)
+            .verticalScroll(scrollState)
     ) {
         // Header
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween,
+        Column(
             modifier = Modifier.fillMaxWidth()
         ) {
             Column {
@@ -74,6 +73,8 @@ fun PreTrialHearingScreen(
                 )
             }
 
+            Spacer(modifier = Modifier.height(16.dp))
+
             Button(
                 onClick = onProceedToCourtroom,
                 enabled = allRuled,
@@ -82,7 +83,7 @@ fun PreTrialHearingScreen(
                     disabledContainerColor = Color.DarkGray
                 ),
                 shape = RoundedCornerShape(4.dp),
-                modifier = Modifier.testTag("proceed_to_trial_button")
+                modifier = Modifier.fillMaxWidth().testTag("proceed_to_trial_button")
             ) {
                 Text("Proceed to Courtroom Trial", fontSize = 12.sp, color = if (allRuled) Color.Black else Color.Gray, fontWeight = FontWeight.Bold)
             }
@@ -128,9 +129,7 @@ fun PreTrialHearingScreen(
 
         // Motions List
         Column(
-            modifier = Modifier
-                .weight(1f)
-                .verticalScroll(scrollState),
+            modifier = Modifier.fillMaxWidth(),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             if (motions.isEmpty()) {

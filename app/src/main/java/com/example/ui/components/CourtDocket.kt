@@ -383,8 +383,11 @@ fun ObjectionOverlay(
             shape = RoundedCornerShape(12.dp),
             color = if (isDark) Color(0xFF1E1E24) else CourtSurface
         ) {
+            val scrollState = rememberScrollState()
             Column(
-                modifier = Modifier.padding(24.dp),
+                modifier = Modifier
+                    .padding(24.dp)
+                    .verticalScroll(scrollState),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Box(

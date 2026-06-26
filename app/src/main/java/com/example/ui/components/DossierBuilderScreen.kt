@@ -59,11 +59,10 @@ fun DossierBuilderScreen(
             .fillMaxSize()
             .background(Color(0xFF0F0F11))
             .padding(16.dp)
+            .verticalScroll(scrollState)
     ) {
         // Header
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween,
+        Column(
             modifier = Modifier.fillMaxWidth()
         ) {
             Column {
@@ -90,14 +89,16 @@ fun DossierBuilderScreen(
                 )
             }
 
-            Row {
+            Spacer(modifier = Modifier.height(16.dp))
+
+            Row(modifier = Modifier.fillMaxWidth()) {
                 Button(
                     onClick = onClose,
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF25252D)),
                     shape = RoundedCornerShape(4.dp),
-                    modifier = Modifier.testTag("close_dossier_builder_button")
+                    modifier = Modifier.testTag("close_dossier_builder_button").weight(1f)
                 ) {
-                    Text("Resume Investigation", fontSize = 12.sp, color = Color.White)
+                    Text("Resume Investigation", fontSize = 12.sp, color = Color.White, textAlign = TextAlign.Center)
                 }
                 Spacer(modifier = Modifier.width(8.dp))
                 Button(
@@ -108,9 +109,9 @@ fun DossierBuilderScreen(
                         disabledContainerColor = Color.DarkGray
                     ),
                     shape = RoundedCornerShape(4.dp),
-                    modifier = Modifier.testTag("submit_dossier_button")
+                    modifier = Modifier.testTag("submit_dossier_button").weight(1f)
                 ) {
-                    Text("Proceed to Pre-Trial Hearing", fontSize = 12.sp, color = Color.Black, fontWeight = FontWeight.Bold)
+                    Text("Proceed to Pre-Trial Hearing", fontSize = 12.sp, color = Color.Black, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
                 }
             }
         }

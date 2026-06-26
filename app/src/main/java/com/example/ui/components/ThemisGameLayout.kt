@@ -263,6 +263,21 @@ fun ThemisGameLayout(
             }
 
             Spacer(modifier = Modifier.weight(1f))
+            
+            Button(
+                onClick = { onIntent(ThemisIntent.ExportLogToPdf) },
+                modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = if (isDark) Color(0xFF2A2A30) else Color(0xFFE0E0E0),
+                    contentColor = if (isDark) Color.White else Color.Black
+                ),
+                shape = RoundedCornerShape(8.dp)
+            ) {
+                Icon(Icons.Default.Share, contentDescription = "Export PDF", modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("EXPORT CASE LOG", style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold))
+            }
+
             Text(
                 text = "SYSTEM ENGINE: BYOK LLM\nVER 2.0.0",
                 style = MaterialTheme.typography.labelSmall.copy(
@@ -273,6 +288,25 @@ fun ThemisGameLayout(
                 color = if (isDark) Color.DarkGray else Color.Gray,
                 modifier = Modifier.fillMaxWidth()
             )
+        }
+    }
+
+    val context = androidx.compose.ui.platform.LocalContext.current
+    androidx.compose.runtime.LaunchedEffect(uiState.exportedPdfFile) {
+        uiState.exportedPdfFile?.let { file ->
+            android.widget.Toast.makeText(context, "Saved to Downloads: ${file.name}", android.widget.Toast.LENGTH_LONG).show()
+            val uri = androidx.core.content.FileProvider.getUriForFile(
+                context,
+                "${context.packageName}.provider",
+                file
+            )
+            val shareIntent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                type = "application/pdf"
+                putExtra(android.content.Intent.EXTRA_STREAM, uri)
+                addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            context.startActivity(android.content.Intent.createChooser(shareIntent, "Share Case Log PDF"))
+            onIntent(ThemisIntent.ClearExportedPdf)
         }
     }
 

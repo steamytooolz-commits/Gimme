@@ -43,6 +43,10 @@ sealed interface ThemisIntent {
     
     // Phase 6 Cold Case Intents
     data class ReopenColdCase(val caseId: String) : ThemisIntent
+    
+    // Export Intents
+    data object ExportLogToPdf : ThemisIntent
+    data object ClearExportedPdf : ThemisIntent
 }
 
 // --- Active Objection State ---
@@ -82,7 +86,8 @@ data class ThemisUiState(
     val isGeneratingCase: Boolean = false,
     val generationProgress: String = "",
     val caseProgress: CaseProgress? = null,
-    val coldCaseArchive: List<CaseProgress> = emptyList()
+    val coldCaseArchive: List<CaseProgress> = emptyList(),
+    val exportedPdfFile: java.io.File? = null
 )
 
 
@@ -203,6 +208,21 @@ class ThemisViewModel(
             }
             is ThemisIntent.ReopenColdCase -> {
                 handleReopenColdCase(intent.caseId)
+            }
+            ThemisIntent.ExportLogToPdf -> handleExportToPdf()
+            ThemisIntent.ClearExportedPdf -> _uiState.update { it.copy(exportedPdfFile = null) }
+        }
+    }
+
+    private fun handleExportToPdf() {
+        val caseId = _uiState.value.activeCaseId
+        val context = getApplication<Application>()
+        viewModelScope.launch {
+            try {
+                val file = com.example.domain.PdfExportUseCase(repository).exportCaseLogToPdf(context, caseId)
+                _uiState.update { it.copy(exportedPdfFile = file) }
+            } catch (e: Exception) {
+                _uiState.update { it.copy(errorMessage = "Failed to export PDF: ${e.localizedMessage}") }
             }
         }
     }
@@ -651,6 +671,19 @@ class ThemisViewModel(
             )
 
             when (tool.name) {
+                "simulate_action" -> {
+                    val actionType = tool.args["action_type"] as? String ?: "UNKNOWN_ACTION"
+                    val outcomeDescription = tool.args["outcome_description"] as? String ?: "Action performed."
+                    repository.insertMessage(
+                        ChatMessage(
+                            id = UUID.randomUUID().toString(),
+                            phase = _uiState.value.currentPhase,
+                            sender = "System",
+                            text = "ACTION PERFORMED: [$actionType]\nRESULT: $outcomeDescription",
+                            isSystem = true
+                        )
+                    )
+                }
                 "advance_time" -> {
                     val hours = (tool.args["hours"] as? Double)?.toInt() ?: 1
                     val reason = tool.args["reason"] as? String ?: "Investigation"
@@ -882,7 +915,11 @@ class ThemisViewModel(
             append("2. add_evidence(id: String, name: String, description: String, forensic_report: String, location: String) - Trigger when the player successfully uncovers a new clue by searching desk or chambers.\n")
             append("3. modify_npc_stress(npc_id: String, delta: Int) - Delta can be negative or positive.\n")
             append("4. trigger_objection(type: String, target_witness: String) - Only allowed in COURTROOM phase. Types: HEARSAY, LEADING, IRRELEVANT, SPECULATION.\n")
-            append("5. update_world_state(key: String, value: String) - Set flags for plot points.\n\n")
+            append("5. update_world_state(key: String, value: String) - Set flags for plot points.\n")
+            append("6. simulate_action(action_type: String, outcome_description: String) - Executes one of the 150+ AI actions to progress the simulation (see lexicon below).\n\n")
+            
+            append(com.example.domain.AiActionLexicon.FULL_LEXICON)
+            append("\n\n")
 
             if (selectedNpc != null) {
                 append("ROLEPLAY DIRECTIVE:\n")
@@ -1011,7 +1048,7 @@ class ThemisViewModel(
                         id = UUID.randomUUID().toString(),
                         phase = GamePhase.INVESTIGATION,
                         sender = "System",
-                        text = "The world of ${bible.meta.setting.name} has been generated. The crime: ${groundTruth.coreCrime}. Let the investigation begin.",
+                        text = "The world of ${bible.meta.setting.name} has been generated. The crime: ${groundTruth.coreCrime}. Let the investigation begin.\n\n[HINT: You can type any of the 150+ available AI Actions such as 'dust for prints', 'request subpoena', 'cross-examine', 'tail suspect', or 'analyze forensics' in the chat to dynamically shape the simulation!]",
                         isSystem = true
                     )
                 )
@@ -1327,7 +1364,7 @@ class ThemisViewModel(
                 startingEvidence = listOf(
                     com.example.data.local.EvidenceEntity("mystery_note", "A Mysterious Cipher", "A crumpled paper with strange markings.", "Decryption reveals details about a meeting at midnight.", params.setting, "Magistrate", System.currentTimeMillis(), "WARRANT_001", "Crucial timeline indicator.", "ADMISSIBLE")
                 )
-                welcomeMessage = "Welcome, Magistrate. A dark web of secrets has wrapped around ${params.setting} with a tone of ${params.tone}. Interrogate the suspects and unravel this mystery."
+                welcomeMessage = "Welcome, Magistrate. A dark web of secrets has wrapped around ${params.setting} with a tone of ${params.tone}. Interrogate the suspects and unravel this mystery.\n\n[HINT: Type any of the 150+ available AI Actions like 'forensic analysis', 'subpoena bank records', or 'tail suspect' to dynamically shape the simulation!]"
             }
         }
 
