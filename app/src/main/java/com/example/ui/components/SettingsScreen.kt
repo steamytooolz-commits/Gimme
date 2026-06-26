@@ -45,7 +45,7 @@ fun SettingsScreen(
     var isApiKeyVisible by remember { mutableStateOf(false) }
     var hasUserEditedSinceTest by remember { mutableStateOf(false) }
 
-    val presets = listOf("OpenAI", "OpenRouter", "Anthropic", "Custom / Local (Ollama)")
+    val presets = listOf("OpenAI", "OpenRouter", "Anthropic", "G4F", "Custom / Local (Ollama)")
 
     Box(
         modifier = modifier
@@ -106,7 +106,8 @@ fun SettingsScreen(
                         "OpenAI" -> uiState.config.providerName == "OpenAI" && uiState.config.baseUrl.contains("openai")
                         "OpenRouter" -> uiState.config.providerName == "OpenRouter" && uiState.config.baseUrl.contains("openrouter")
                         "Anthropic" -> uiState.config.providerName == "Anthropic" && uiState.config.baseUrl.contains("anthropic")
-                        else -> uiState.config.providerName == "Custom / Local" || (!uiState.config.baseUrl.contains("openai") && !uiState.config.baseUrl.contains("openrouter") && !uiState.config.baseUrl.contains("anthropic"))
+                        "G4F" -> uiState.config.providerName == "G4F" && uiState.config.baseUrl.contains("g4f")
+                        else -> uiState.config.providerName == "Custom / Local" || (!uiState.config.baseUrl.contains("openai") && !uiState.config.baseUrl.contains("openrouter") && !uiState.config.baseUrl.contains("anthropic") && !uiState.config.baseUrl.contains("g4f"))
                     }
 
                     OutlinedButton(
@@ -135,6 +136,14 @@ fun SettingsScreen(
                                         baseUrl = "https://api.anthropic.com/v1/",
                                         modelName = "claude-3-5-sonnet-20241022",
                                         requiresApiKey = true
+                                    )
+                                )
+                                "G4F" -> onConfigChange(
+                                    LlmEndpointConfig(
+                                        providerName = "G4F",
+                                        baseUrl = "https://g4f.space/v1/",
+                                        modelName = "gpt-4o-mini",
+                                        requiresApiKey = false
                                     )
                                 )
                                 else -> onConfigChange(
