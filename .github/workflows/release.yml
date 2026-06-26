@@ -41,7 +41,7 @@ jobs:
           fi
 
       - name: Build Debug APK
-        run: chmod +x gradlew && ./gradlew assembleDebug --no-daemon
+        run: gradle assembleDebug --no-daemon
 
       - name: Determine Release Tag
         id: get_tag

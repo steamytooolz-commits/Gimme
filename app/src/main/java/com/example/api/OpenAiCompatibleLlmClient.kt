@@ -131,9 +131,10 @@ class OpenAiCompatibleLlmClient : LlmClient {
     }.flowOn(Dispatchers.IO)
 
     override suspend fun validateConnection(config: LlmEndpointConfig, apiKey: String): Result<List<String>> = withContext(Dispatchers.IO) {
-        // For G4F, we skip the /models endpoint as it often triggers rate limits or is unsupported
+        // For G4F, we skip real network validation as it frequently triggers rate limits or returns 500
+        // on validation/models endpoints. We allow the user to proceed with their manual config.
         if (config.providerName == "G4F") {
-            return@withContext performDummyCompletionValidation(config, apiKey)
+            return@withContext Result.success(listOf(config.modelName))
         }
 
         // First, attempt to fetch models from standard GET /v1/models endpoint
