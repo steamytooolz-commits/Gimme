@@ -142,7 +142,7 @@ fun SettingsScreen(
                                     LlmEndpointConfig(
                                         providerName = "G4F",
                                         baseUrl = "https://g4f.space/v1/",
-                                        modelName = "gpt-4o-mini",
+                                        modelName = "gpt-4o",
                                         requiresApiKey = false
                                     )
                                 )
