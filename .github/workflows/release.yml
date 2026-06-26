@@ -33,11 +33,14 @@ jobs:
         with:
           gradle-version: '9.3.1'
 
-      - name: Decode Keystore
+      - name: Decode or Generate Keystore
         run: |
           if [ -f "debug.keystore.base64" ]; then
             echo "Decoding debug.keystore.base64 to debug.keystore"
             base64 -d debug.keystore.base64 > debug.keystore
+          elif [ ! -f "debug.keystore" ]; then
+            echo "Generating temporary debug.keystore"
+            keytool -genkey -v -keystore debug.keystore -alias androiddebugkey -storepass android -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
           fi
 
       - name: Build Debug APK
