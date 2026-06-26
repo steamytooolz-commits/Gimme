@@ -131,6 +131,11 @@ class OpenAiCompatibleLlmClient : LlmClient {
     }.flowOn(Dispatchers.IO)
 
     override suspend fun validateConnection(config: LlmEndpointConfig, apiKey: String): Result<List<String>> = withContext(Dispatchers.IO) {
+        // For G4F, we skip the /models endpoint as it often triggers rate limits or is unsupported
+        if (config.providerName == "G4F") {
+            return@withContext performDummyCompletionValidation(config, apiKey)
+        }
+
         // First, attempt to fetch models from standard GET /v1/models endpoint
         val modelsUrl = if (config.baseUrl.endsWith("/")) "${config.baseUrl}models" else "${config.baseUrl}/models"
         val requestBuilder = Request.Builder().url(modelsUrl).get()
@@ -159,6 +164,10 @@ class OpenAiCompatibleLlmClient : LlmClient {
             Log.w(tag, "GET /models call failed or unsupported. Retrying via dummy completion call.", e)
         }
 
+        return@withContext performDummyCompletionValidation(config, apiKey)
+    }
+
+    private suspend fun performDummyCompletionValidation(config: LlmEndpointConfig, apiKey: String): Result<List<String>> = withContext(Dispatchers.IO) {
         // Fallback: Make a cheap, tiny 1-token completion call to validate credentials and config
         val completionsUrl = if (config.baseUrl.endsWith("/")) "${config.baseUrl}chat/completions" else "${config.baseUrl}/chat/completions"
         val fallbackPayload = OpenAiChatRequest(
