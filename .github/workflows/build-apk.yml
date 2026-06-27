@@ -23,15 +23,8 @@ jobs:
         with:
           gradle-version: '9.3.1'
 
-      - name: Download Gradle Wrapper JAR if missing
-        run: |
-          if [ ! -f "gradle/wrapper/gradle-wrapper.jar" ]; then
-            echo "gradle-wrapper.jar is missing in the repository! Downloading..."
-            mkdir -p gradle/wrapper
-            curl -L -o gradle/wrapper/gradle-wrapper.jar https://raw.githubusercontent.com/gradle/gradle/v9.3.1/gradle/wrapper/gradle-wrapper.jar
-          else
-            echo "gradle-wrapper.jar exists."
-          fi
+      - name: Generate Gradle Wrapper
+        run: gradle wrapper
 
       - name: Decode or Generate Keystore
         run: |
