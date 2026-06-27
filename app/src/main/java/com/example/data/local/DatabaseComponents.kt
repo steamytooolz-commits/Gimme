@@ -168,6 +168,9 @@ interface EvidenceDao {
     @Query("SELECT * FROM evidence WHERE id = :id LIMIT 1")
     suspend fun getEvidenceById(id: String): EvidenceEntity?
 
+    @Query("DELETE FROM evidence WHERE id = :id")
+    suspend fun deleteEvidenceById(id: String)
+
     @Query("DELETE FROM evidence")
     suspend fun clearAll()
 }

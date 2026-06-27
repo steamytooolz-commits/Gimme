@@ -125,7 +125,8 @@ fun ThemisGameLayout(
                     NavigationDestination.CaseFiles -> {
                         EvidenceDossier(
                             evidenceList = uiState.evidenceList,
-                            currentPhase = uiState.currentPhase
+                            currentPhase = uiState.currentPhase,
+                            onIntent = onIntent
                         )
                     }
                     NavigationDestination.LawAndOrder -> {

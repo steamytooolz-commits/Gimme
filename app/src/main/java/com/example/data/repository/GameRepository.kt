@@ -210,6 +210,15 @@ class GameRepository(val db: ThemisDatabase) {
         )
     }
 
+    suspend fun deleteEvidence(id: String) {
+        db.evidenceDao().deleteEvidenceById(id)
+    }
+
+    suspend fun updateEvidenceAnnotations(id: String, annotations: String) {
+        val current = db.evidenceDao().getEvidenceById(id) ?: return
+        db.evidenceDao().insertEvidence(current.copy(userAnnotations = annotations))
+    }
+
     suspend fun addLink(link: EvidenceLink) {
         db.evidenceLinkDao().insertLink(
             EvidenceLinkEntity(

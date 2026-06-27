@@ -45,6 +45,9 @@ sealed interface ThemisIntent {
     data object GeneratePreTrialMotions : ThemisIntent
     data class RuleOnPreTrialMotion(val motionId: String, val sustain: Boolean) : ThemisIntent
     data object ProceedToCourtroomFromHearing : ThemisIntent
+    data class UpdateEvidenceAnnotations(val evidenceId: String, val annotations: String) : ThemisIntent
+    data class DeleteEvidence(val evidenceId: String) : ThemisIntent
+    data class AddManualEvidence(val name: String, val description: String, val forensicReport: String, val location: String, val isAdmissible: Boolean) : ThemisIntent
     
     // Phase 6 Cold Case Intents
     data class ReopenColdCase(val caseId: String) : ThemisIntent
@@ -244,6 +247,36 @@ class ThemisViewModel(
                         magistrateJustification = intent.justification
                     )
                     repository.addLink(link)
+                }
+            }
+            is ThemisIntent.UpdateEvidenceAnnotations -> {
+                viewModelScope.launch {
+                    repository.updateEvidenceAnnotations(intent.evidenceId, intent.annotations)
+                }
+            }
+            is ThemisIntent.DeleteEvidence -> {
+                viewModelScope.launch {
+                    repository.deleteEvidence(intent.evidenceId)
+                }
+            }
+            is ThemisIntent.AddManualEvidence -> {
+                viewModelScope.launch {
+                    val status = if (intent.isAdmissible) AdmissibilityStatus.ADMISSIBLE else AdmissibilityStatus.INADMISSIBLE
+                    val evidence = EvidenceItem(
+                        id = "clue_" + UUID.randomUUID().toString().take(6),
+                        name = intent.name,
+                        physicalDescription = intent.description,
+                        forensicReport = intent.forensicReport,
+                        collectionContext = CollectionContext(
+                            locationFound = intent.location,
+                            collectingOfficer = "Magistrate (Manual)",
+                            timestamp = System.currentTimeMillis(),
+                            warrantUsed = if (intent.isAdmissible) "WARRANT_MANUAL" else null
+                        ),
+                        userAnnotations = "",
+                        admissibilityStatus = status
+                    )
+                    repository.addEvidence(evidence)
                 }
             }
             ThemisIntent.OpenDossierBuilder -> {
