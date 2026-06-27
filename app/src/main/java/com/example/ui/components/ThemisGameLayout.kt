@@ -60,6 +60,8 @@ fun ThemisGameLayout(
     onApiKeyChange: (String) -> Unit,
     onTestConnection: () -> Unit,
     onSaveSettings: () -> Unit,
+    onFontSizeChange: (Float) -> Unit,
+    onThemeChange: (String) -> Unit,
     modifier: Modifier = Modifier
 ) {
     var currentDestination by remember { mutableStateOf<NavigationDestination>(NavigationDestination.Dashboard) }
@@ -197,7 +199,9 @@ fun ThemisGameLayout(
                             onApiKeyChange = onApiKeyChange,
                             onTestConnection = onTestConnection,
                             onSaveSettings = onSaveSettings,
-                            isDark = isDark
+                            isDark = isDark,
+                            onFontSizeChange = onFontSizeChange,
+                            onThemeChange = onThemeChange
                         )
                     }
                 }

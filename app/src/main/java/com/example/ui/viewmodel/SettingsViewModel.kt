@@ -27,7 +27,9 @@ data class SettingsUiState(
         requiresApiKey = true
     ),
     val apiKey: String = "",
-    val connectionStatus: ConnectionStatus = ConnectionStatus.Idle
+    val connectionStatus: ConnectionStatus = ConnectionStatus.Idle,
+    val fontSizeMultiplier: Float = 1.0f,
+    val customTheme: String = "Auto"
 )
 
 class SettingsViewModel(
@@ -45,21 +47,16 @@ class SettingsViewModel(
     fun loadSettings() {
         val savedConfig = secureStorageRepository.getLlmConfig()
         val savedApiKey = secureStorageRepository.getApiKey()
-        if (savedConfig != null) {
-            _uiState.update {
-                it.copy(
-                    config = savedConfig,
-                    apiKey = savedApiKey,
-                    connectionStatus = ConnectionStatus.Idle
-                )
-            }
-        } else {
-            _uiState.update {
-                it.copy(
-                    apiKey = savedApiKey,
-                    connectionStatus = ConnectionStatus.Idle
-                )
-            }
+        val savedFontSize = secureStorageRepository.getFontSizeMultiplier()
+        val savedTheme = secureStorageRepository.getUiThemePreference()
+        _uiState.update {
+            it.copy(
+                config = savedConfig ?: it.config,
+                apiKey = savedApiKey,
+                fontSizeMultiplier = savedFontSize,
+                customTheme = savedTheme,
+                connectionStatus = ConnectionStatus.Idle
+            )
         }
     }
 
@@ -69,6 +66,16 @@ class SettingsViewModel(
 
     fun updateApiKey(apiKey: String) {
         _uiState.update { it.copy(apiKey = apiKey) }
+    }
+
+    fun updateFontSizeMultiplier(multiplier: Float) {
+        _uiState.update { it.copy(fontSizeMultiplier = multiplier) }
+        secureStorageRepository.saveFontSizeMultiplier(multiplier)
+    }
+
+    fun updateCustomTheme(theme: String) {
+        _uiState.update { it.copy(customTheme = theme) }
+        secureStorageRepository.saveUiThemePreference(theme)
     }
 
     fun testConnection() {
@@ -92,6 +99,8 @@ class SettingsViewModel(
         val currentState = _uiState.value
         secureStorageRepository.saveLlmConfig(currentState.config)
         secureStorageRepository.saveApiKey(currentState.apiKey)
+        secureStorageRepository.saveFontSizeMultiplier(currentState.fontSizeMultiplier)
+        secureStorageRepository.saveUiThemePreference(currentState.customTheme)
     }
 }
 

@@ -56,7 +56,11 @@ class MainActivity : ComponentActivity() {
             val uiState by viewModel.uiState.collectAsState()
             val settingsUiState by settingsViewModel.uiState.collectAsState()
 
-            ThemisTheme(phase = uiState.currentPhase) {
+            ThemisTheme(
+                phase = uiState.currentPhase,
+                fontSizeMultiplier = settingsUiState.fontSizeMultiplier,
+                customTheme = settingsUiState.customTheme
+            ) {
                 Surface(
                     modifier = Modifier.fillMaxSize()
                 ) {
@@ -67,7 +71,9 @@ class MainActivity : ComponentActivity() {
                         onConfigChange = { settingsViewModel.updateConfig(it) },
                         onApiKeyChange = { settingsViewModel.updateApiKey(it) },
                         onTestConnection = { settingsViewModel.testConnection() },
-                        onSaveSettings = { settingsViewModel.saveSettings() }
+                        onSaveSettings = { settingsViewModel.saveSettings() },
+                        onFontSizeChange = { settingsViewModel.updateFontSizeMultiplier(it) },
+                        onThemeChange = { settingsViewModel.updateCustomTheme(it) }
                     )
                 }
             }

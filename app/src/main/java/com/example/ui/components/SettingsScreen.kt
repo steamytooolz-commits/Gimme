@@ -39,6 +39,8 @@ fun SettingsScreen(
     onTestConnection: () -> Unit,
     onSaveSettings: () -> Unit,
     isDark: Boolean,
+    onFontSizeChange: (Float) -> Unit,
+    onThemeChange: (String) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val scrollState = rememberScrollState()
@@ -415,6 +417,187 @@ fun SettingsScreen(
                             }
                         }
                     }
+                }
+            }
+
+            // --- Custom UI & Resizable Font Section ---
+            HorizontalDivider(
+                modifier = Modifier.padding(vertical = 24.dp),
+                color = if (isDark) Color.DarkGray else Color.LightGray
+            )
+
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.padding(bottom = 16.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Build,
+                    contentDescription = "UI Customizer",
+                    tint = if (isDark) AmberAccent else WarmWoodBrown,
+                    modifier = Modifier.size(24.dp)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = "AESTHETICS & ACCESSIBILITY",
+                    style = MaterialTheme.typography.titleMedium.copy(
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 1.sp,
+                        fontFamily = FontFamily.Monospace
+                    ),
+                    color = if (isDark) Color.White else Color.Black
+                )
+            }
+
+            // 1. Theme Preferences
+            Text(
+                text = "Select Custom Theme:",
+                style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                color = if (isDark) AmberAccent else WarmWoodBrown,
+                modifier = Modifier.padding(bottom = 8.dp)
+            )
+
+            val themes = listOf(
+                "Auto" to "Phase-Based adaptive theme",
+                "Classic Terminal" to "Amber & Dark Terminal (Monospace)",
+                "Warm Parchment" to "Serif Legal Parchment (Warm light)",
+                "Cyberpunk Neon" to "Glowing Cyan & Obsidian dark",
+                "Royal Court" to "Imperial Gold & Deep Navy blue"
+            )
+
+            Column(
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.padding(bottom = 20.dp)
+            ) {
+                themes.forEach { (themeName, themeDesc) ->
+                    val isThemeSelected = uiState.customTheme == themeName
+                    val themeColor = when (themeName) {
+                        "Classic Terminal" -> AmberAccent
+                        "Warm Parchment" -> WarmWoodBrown
+                        "Cyberpunk Neon" -> Color(0xFF00E5FF)
+                        "Royal Court" -> Color(0xFFF1D483)
+                        else -> if (isDark) AmberAccent else WarmWoodBrown
+                    }
+
+                    OutlinedButton(
+                        onClick = { onThemeChange(themeName) },
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            containerColor = if (isThemeSelected) {
+                                themeColor.copy(alpha = 0.15f)
+                            } else Color.Transparent,
+                            contentColor = if (isDark) Color.White else Color.Black
+                        ),
+                        border = androidx.compose.foundation.BorderStroke(
+                            width = if (isThemeSelected) 2.dp else 1.dp,
+                            color = if (isThemeSelected) themeColor else if (isDark) Color.DarkGray else Color.LightGray
+                        ),
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("theme_button_${themeName.replace(" ", "_").lowercase()}")
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = themeName,
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (isDark) Color.White else Color.Black
+                                )
+                                Text(
+                                    text = themeDesc,
+                                    fontSize = 11.sp,
+                                    color = if (isDark) Color.Gray else Color.DarkGray
+                                )
+                            }
+                            if (isThemeSelected) {
+                                Icon(
+                                    imageVector = Icons.Default.CheckCircle,
+                                    contentDescription = "Selected Theme",
+                                    tint = themeColor,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // 2. Resizable Font Size Slider
+            Text(
+                text = "Resize Font Scale:",
+                style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                color = if (isDark) AmberAccent else WarmWoodBrown,
+                modifier = Modifier.padding(bottom = 4.dp)
+            )
+
+            val currentScale = uiState.fontSizeMultiplier
+            val scaleLabel = when {
+                currentScale < 0.9f -> "Small (85%)"
+                currentScale < 1.1f -> "Normal (100%)"
+                currentScale < 1.25f -> "Large (115%)"
+                else -> "Extra Large (130%)"
+            }
+
+            Text(
+                text = "Current scale: $scaleLabel",
+                fontSize = 13.sp,
+                color = if (isDark) Color.LightGray else Color.DarkGray,
+                modifier = Modifier.padding(bottom = 8.dp)
+            )
+
+            Slider(
+                value = currentScale,
+                onValueChange = {
+                    val snappedValue = when {
+                        it < 0.92f -> 0.85f
+                        it < 1.08f -> 1.0f
+                        it < 1.22f -> 1.15f
+                        else -> 1.3f
+                    }
+                    onFontSizeChange(snappedValue)
+                },
+                valueRange = 0.85f..1.3f,
+                steps = 2,
+                colors = SliderDefaults.colors(
+                    thumbColor = if (isDark) AmberAccent else WarmWoodBrown,
+                    activeTrackColor = if (isDark) AmberAccent else WarmWoodBrown,
+                    inactiveTrackColor = if (isDark) Color.DarkGray else Color.LightGray
+                ),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 8.dp)
+                    .testTag("font_size_slider")
+            )
+
+            // Live Font Scaling Preview Box
+            Card(
+                colors = CardDefaults.cardColors(
+                    containerColor = if (isDark) Color(0xFF16161B) else Color(0xFFF0EBE1)
+                ),
+                border = androidx.compose.foundation.BorderStroke(1.dp, if (isDark) Color(0xFF2C2C35) else Color.LightGray),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 12.dp, bottom = 24.dp)
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text(
+                        text = "LIVE TYPOGRAPHY PREVIEW",
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = if (isDark) Color.Gray else Color.DarkGray,
+                        modifier = Modifier.padding(bottom = 8.dp)
+                    )
+                    Text(
+                        text = "The justice system of Project Themis requires prompt and meticulous adjudication of all evidence dockets.",
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = if (isDark) Color.White else Color.Black
+                    )
                 }
             }
 

@@ -15,6 +15,10 @@ interface SecureStorageRepository {
     fun getLlmConfig(): LlmEndpointConfig?
     fun saveApiKey(key: String)
     fun getApiKey(): String
+    fun saveFontSizeMultiplier(multiplier: Float)
+    fun getFontSizeMultiplier(): Float
+    fun saveUiThemePreference(theme: String)
+    fun getUiThemePreference(): String
     fun clearAll()
 }
 
@@ -24,6 +28,8 @@ class SecureStorageRepositoryImpl(private val context: Context) : SecureStorageR
     private val prefsName = "themis_secure_prefs"
     private val configKey = "llm_endpoint_config"
     private val apiKeySecret = "llm_api_key_secret"
+    private val fontSizeKey = "ui_font_size_multiplier"
+    private val themePreferenceKey = "ui_theme_preference"
 
     private val sharedPreferences: SharedPreferences by lazy {
         try {
@@ -87,6 +93,40 @@ class SecureStorageRepositoryImpl(private val context: Context) : SecureStorageR
         } catch (e: Exception) {
             Log.e(tag, "Failed to decode API key", e)
             ""
+        }
+    }
+
+    override fun saveFontSizeMultiplier(multiplier: Float) {
+        try {
+            sharedPreferences.edit().putFloat(fontSizeKey, multiplier).apply()
+        } catch (e: Exception) {
+            Log.e(tag, "Failed to save font size multiplier", e)
+        }
+    }
+
+    override fun getFontSizeMultiplier(): Float {
+        return try {
+            sharedPreferences.getFloat(fontSizeKey, 1.0f)
+        } catch (e: Exception) {
+            Log.e(tag, "Failed to load font size multiplier", e)
+            1.0f
+        }
+    }
+
+    override fun saveUiThemePreference(theme: String) {
+        try {
+            sharedPreferences.edit().putString(themePreferenceKey, theme).apply()
+        } catch (e: Exception) {
+            Log.e(tag, "Failed to save theme preference", e)
+        }
+    }
+
+    override fun getUiThemePreference(): String {
+        return try {
+            sharedPreferences.getString(themePreferenceKey, "Auto") ?: "Auto"
+        } catch (e: Exception) {
+            Log.e(tag, "Failed to load theme preference", e)
+            "Auto"
         }
     }
 
