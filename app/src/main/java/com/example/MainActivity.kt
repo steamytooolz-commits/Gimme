@@ -11,6 +11,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.room.Room
+import com.google.android.gms.ads.MobileAds
 import com.example.api.OpenAiCompatibleLlmClient
 import com.example.data.local.ThemisDatabase
 import com.example.data.repository.GameRepository
@@ -32,6 +33,13 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+
+        // Initialize Google Mobile Ads SDK
+        try {
+            MobileAds.initialize(this) {}
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
 
         // 1. Manually instantiate database, repository, secure storage, and LLM Client (Clean manual DI)
         database = Room.databaseBuilder(
@@ -73,7 +81,10 @@ class MainActivity : ComponentActivity() {
                         onTestConnection = { settingsViewModel.testConnection() },
                         onSaveSettings = { settingsViewModel.saveSettings() },
                         onFontSizeChange = { settingsViewModel.updateFontSizeMultiplier(it) },
-                        onThemeChange = { settingsViewModel.updateCustomTheme(it) }
+                        onThemeChange = { settingsViewModel.updateCustomTheme(it) },
+                        onAdUnitIdChange = { settingsViewModel.updateAdUnitId(it) },
+                        onUseSimulatedAdsChange = { settingsViewModel.updateUseSimulatedAds(it) },
+                        onAdsEnabledChange = { settingsViewModel.updateAdsEnabled(it) }
                     )
                 }
             }

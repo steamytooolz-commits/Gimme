@@ -29,7 +29,10 @@ data class SettingsUiState(
     val apiKey: String = "",
     val connectionStatus: ConnectionStatus = ConnectionStatus.Idle,
     val fontSizeMultiplier: Float = 1.0f,
-    val customTheme: String = "Auto"
+    val customTheme: String = "Auto",
+    val adUnitId: String = "ca-app-pub-3940256099942544/6300978111",
+    val useSimulatedAds: Boolean = false,
+    val adsEnabled: Boolean = true
 )
 
 class SettingsViewModel(
@@ -49,12 +52,18 @@ class SettingsViewModel(
         val savedApiKey = secureStorageRepository.getApiKey()
         val savedFontSize = secureStorageRepository.getFontSizeMultiplier()
         val savedTheme = secureStorageRepository.getUiThemePreference()
+        val savedAdUnitId = secureStorageRepository.getAdUnitId()
+        val savedUseSimulatedAds = secureStorageRepository.getUseSimulatedAds()
+        val savedAdsEnabled = secureStorageRepository.getAdsEnabled()
         _uiState.update {
             it.copy(
                 config = savedConfig ?: it.config,
                 apiKey = savedApiKey,
                 fontSizeMultiplier = savedFontSize,
                 customTheme = savedTheme,
+                adUnitId = savedAdUnitId,
+                useSimulatedAds = savedUseSimulatedAds,
+                adsEnabled = savedAdsEnabled,
                 connectionStatus = ConnectionStatus.Idle
             )
         }
@@ -76,6 +85,21 @@ class SettingsViewModel(
     fun updateCustomTheme(theme: String) {
         _uiState.update { it.copy(customTheme = theme) }
         secureStorageRepository.saveUiThemePreference(theme)
+    }
+
+    fun updateAdUnitId(id: String) {
+        _uiState.update { it.copy(adUnitId = id) }
+        secureStorageRepository.saveAdUnitId(id)
+    }
+
+    fun updateUseSimulatedAds(use: Boolean) {
+        _uiState.update { it.copy(useSimulatedAds = use) }
+        secureStorageRepository.saveUseSimulatedAds(use)
+    }
+
+    fun updateAdsEnabled(enabled: Boolean) {
+        _uiState.update { it.copy(adsEnabled = enabled) }
+        secureStorageRepository.saveAdsEnabled(enabled)
     }
 
     fun testConnection() {
@@ -101,6 +125,9 @@ class SettingsViewModel(
         secureStorageRepository.saveApiKey(currentState.apiKey)
         secureStorageRepository.saveFontSizeMultiplier(currentState.fontSizeMultiplier)
         secureStorageRepository.saveUiThemePreference(currentState.customTheme)
+        secureStorageRepository.saveAdUnitId(currentState.adUnitId)
+        secureStorageRepository.saveUseSimulatedAds(currentState.useSimulatedAds)
+        secureStorageRepository.saveAdsEnabled(currentState.adsEnabled)
     }
 }
 

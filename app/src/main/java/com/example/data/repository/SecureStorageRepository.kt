@@ -19,6 +19,12 @@ interface SecureStorageRepository {
     fun getFontSizeMultiplier(): Float
     fun saveUiThemePreference(theme: String)
     fun getUiThemePreference(): String
+    fun saveAdUnitId(id: String)
+    fun getAdUnitId(): String
+    fun saveUseSimulatedAds(use: Boolean)
+    fun getUseSimulatedAds(): Boolean
+    fun saveAdsEnabled(enabled: Boolean)
+    fun getAdsEnabled(): Boolean
     fun clearAll()
 }
 
@@ -30,6 +36,9 @@ class SecureStorageRepositoryImpl(private val context: Context) : SecureStorageR
     private val apiKeySecret = "llm_api_key_secret"
     private val fontSizeKey = "ui_font_size_multiplier"
     private val themePreferenceKey = "ui_theme_preference"
+    private val adUnitIdKey = "ui_ad_unit_id"
+    private val useSimulatedAdsKey = "ui_use_simulated_ads"
+    private val adsEnabledKey = "ui_ads_enabled"
 
     private val sharedPreferences: SharedPreferences by lazy {
         try {
@@ -127,6 +136,57 @@ class SecureStorageRepositoryImpl(private val context: Context) : SecureStorageR
         } catch (e: Exception) {
             Log.e(tag, "Failed to load theme preference", e)
             "Auto"
+        }
+    }
+
+    override fun saveAdUnitId(id: String) {
+        try {
+            sharedPreferences.edit().putString(adUnitIdKey, id).apply()
+        } catch (e: Exception) {
+            Log.e(tag, "Failed to save ad unit ID", e)
+        }
+    }
+
+    override fun getAdUnitId(): String {
+        return try {
+            sharedPreferences.getString(adUnitIdKey, "ca-app-pub-3940256099942544/6300978111") ?: "ca-app-pub-3940256099942544/6300978111"
+        } catch (e: Exception) {
+            Log.e(tag, "Failed to load ad unit ID", e)
+            "ca-app-pub-3940256099942544/6300978111"
+        }
+    }
+
+    override fun saveUseSimulatedAds(use: Boolean) {
+        try {
+            sharedPreferences.edit().putBoolean(useSimulatedAdsKey, use).apply()
+        } catch (e: Exception) {
+            Log.e(tag, "Failed to save use simulated ads", e)
+        }
+    }
+
+    override fun getUseSimulatedAds(): Boolean {
+        return try {
+            sharedPreferences.getBoolean(useSimulatedAdsKey, false)
+        } catch (e: Exception) {
+            Log.e(tag, "Failed to load use simulated ads", e)
+            false
+        }
+    }
+
+    override fun saveAdsEnabled(enabled: Boolean) {
+        try {
+            sharedPreferences.edit().putBoolean(adsEnabledKey, enabled).apply()
+        } catch (e: Exception) {
+            Log.e(tag, "Failed to save ads enabled", e)
+        }
+    }
+
+    override fun getAdsEnabled(): Boolean {
+        return try {
+            sharedPreferences.getBoolean(adsEnabledKey, true)
+        } catch (e: Exception) {
+            Log.e(tag, "Failed to load ads enabled", e)
+            true
         }
     }
 

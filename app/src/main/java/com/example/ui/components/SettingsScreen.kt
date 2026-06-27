@@ -41,6 +41,9 @@ fun SettingsScreen(
     isDark: Boolean,
     onFontSizeChange: (Float) -> Unit,
     onThemeChange: (String) -> Unit,
+    onAdUnitIdChange: (String) -> Unit,
+    onUseSimulatedAdsChange: (Boolean) -> Unit,
+    onAdsEnabledChange: (Boolean) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val scrollState = rememberScrollState()
@@ -599,6 +602,158 @@ fun SettingsScreen(
                         color = if (isDark) Color.White else Color.Black
                     )
                 }
+            }
+
+            // --- Monetization & Sustainability Section ---
+            HorizontalDivider(
+                modifier = Modifier.padding(vertical = 24.dp),
+                color = if (isDark) Color.DarkGray else Color.LightGray
+            )
+
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.padding(bottom = 16.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Star,
+                    contentDescription = "Monetization",
+                    tint = Color(0xFFFFD700), // Imperial Gold
+                    modifier = Modifier.size(24.dp)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = "MONETIZATION & SUSTAINABILITY",
+                    style = MaterialTheme.typography.titleMedium.copy(
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 1.sp,
+                        fontFamily = FontFamily.Monospace
+                    ),
+                    color = if (isDark) Color.White else Color.Black
+                )
+            }
+
+            // Explanatory Card about revenue & credit usage
+            Card(
+                colors = CardDefaults.cardColors(
+                    containerColor = if (isDark) Color(0xFF13131A) else Color(0xFFFBF8F3)
+                ),
+                border = androidx.compose.foundation.BorderStroke(1.dp, if (isDark) Color(0xFF2C2C35) else Color.LightGray),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 20.dp)
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text(
+                        text = "Google Ads generate active revenue to sustain your AI credit usage and keep servers/LLMs operational. Disabling ads will halt local developer monetization support.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = if (isDark) Color.LightGray else Color.DarkGray,
+                        lineHeight = 20.sp
+                    )
+                }
+            }
+
+            // 1. Show Bottom Ads Toggle
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 16.dp)
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Enable Bottom Google Ads",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 14.sp,
+                        color = if (isDark) Color.White else Color.Black
+                    )
+                    Text(
+                        text = "Displays banner ads at the bottom of the screens",
+                        fontSize = 11.sp,
+                        color = if (isDark) Color.Gray else Color.DarkGray
+                    )
+                }
+                Switch(
+                    checked = uiState.adsEnabled,
+                    onCheckedChange = onAdsEnabledChange,
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = if (isDark) AmberAccent else WarmWoodBrown,
+                        checkedTrackColor = (if (isDark) AmberAccent else WarmWoodBrown).copy(alpha = 0.5f)
+                    ),
+                    modifier = Modifier.testTag("ads_enabled_switch")
+                )
+            }
+
+            // 2. Simulated Ads Toggle
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 16.dp)
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Use Simulated Sponsor Ads",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 14.sp,
+                        color = if (isDark) Color.White else Color.Black
+                    )
+                    Text(
+                        text = "Force simulation when offline/in dev sandbox",
+                        fontSize = 11.sp,
+                        color = if (isDark) Color.Gray else Color.DarkGray
+                    )
+                }
+                Switch(
+                    checked = uiState.useSimulatedAds,
+                    onCheckedChange = onUseSimulatedAdsChange,
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = if (isDark) AmberAccent else WarmWoodBrown,
+                        checkedTrackColor = (if (isDark) AmberAccent else WarmWoodBrown).copy(alpha = 0.5f)
+                    ),
+                    modifier = Modifier.testTag("simulated_ads_switch")
+                )
+            }
+
+            // 3. Ad Unit ID Customization
+            Column(modifier = Modifier.padding(bottom = 24.dp)) {
+                Text(
+                    text = "Ad Unit ID (Banner):",
+                    style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                    color = if (isDark) AmberAccent else WarmWoodBrown,
+                    modifier = Modifier.padding(bottom = 8.dp)
+                )
+
+                OutlinedTextField(
+                    value = uiState.adUnitId,
+                    onValueChange = onAdUnitIdChange,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("ad_unit_id_input"),
+                    singleLine = true,
+                    textStyle = MaterialTheme.typography.bodyMedium.copy(
+                        fontFamily = FontFamily.Monospace,
+                        color = if (isDark) Color.White else Color.Black
+                    ),
+                    trailingIcon = {
+                        IconButton(
+                            onClick = { onAdUnitIdChange("ca-app-pub-3940256099942544/6300978111") },
+                            modifier = Modifier.testTag("reset_ad_id_btn")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Refresh,
+                                contentDescription = "Reset default test banner ID",
+                                tint = if (isDark) Color.Gray else Color.DarkGray
+                            )
+                        }
+                    },
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = if (isDark) AmberAccent else WarmWoodBrown,
+                        unfocusedBorderColor = if (isDark) Color.DarkGray else Color.LightGray,
+                        cursorColor = if (isDark) AmberAccent else WarmWoodBrown
+                    )
+                )
             }
 
             // Action Buttons

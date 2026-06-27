@@ -62,6 +62,9 @@ fun ThemisGameLayout(
     onSaveSettings: () -> Unit,
     onFontSizeChange: (Float) -> Unit,
     onThemeChange: (String) -> Unit,
+    onAdUnitIdChange: (String) -> Unit,
+    onUseSimulatedAdsChange: (Boolean) -> Unit,
+    onAdsEnabledChange: (Boolean) -> Unit,
     modifier: Modifier = Modifier
 ) {
     var currentDestination by remember { mutableStateOf<NavigationDestination>(NavigationDestination.Dashboard) }
@@ -201,10 +204,23 @@ fun ThemisGameLayout(
                             onSaveSettings = onSaveSettings,
                             isDark = isDark,
                             onFontSizeChange = onFontSizeChange,
-                            onThemeChange = onThemeChange
+                            onThemeChange = onThemeChange,
+                            onAdUnitIdChange = onAdUnitIdChange,
+                            onUseSimulatedAdsChange = onUseSimulatedAdsChange,
+                            onAdsEnabledChange = onAdsEnabledChange
                         )
                     }
                 }
+            }
+
+            // Show bottom Google ads if enabled
+            if (settingsUiState.adsEnabled) {
+                AdBanner(
+                    isDark = isDark,
+                    adUnitId = settingsUiState.adUnitId,
+                    useSimulatedAds = settingsUiState.useSimulatedAds,
+                    modifier = Modifier.fillMaxWidth()
+                )
             }
         }
     }
