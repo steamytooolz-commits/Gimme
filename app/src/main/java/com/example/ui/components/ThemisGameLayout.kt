@@ -44,6 +44,7 @@ sealed class NavigationDestination(val route: String, val title: String, val ico
     data object Dashboard : NavigationDestination("dashboard", "Dashboard", Icons.Default.Home)
     data object Investigation : NavigationDestination("investigation", "Investigation", Icons.Default.Search)
     data object CaseFiles : NavigationDestination("case_files", "Case Files", Icons.Default.Info)
+    data object LawAndOrder : NavigationDestination("law_and_order", "Law & Gazette", Icons.Default.List)
     data object Courtroom : NavigationDestination("courtroom", "Courtroom", Icons.Default.Build)
     data object ColdCaseArchive : NavigationDestination("cold_case_archive", "Cold Case Archive", Icons.Default.Lock)
     data object Settings : NavigationDestination("settings", "Settings", Icons.Default.Settings)
@@ -74,6 +75,7 @@ fun ThemisGameLayout(
         NavigationDestination.Dashboard,
         NavigationDestination.Investigation,
         NavigationDestination.CaseFiles,
+        NavigationDestination.LawAndOrder,
         NavigationDestination.Courtroom,
         NavigationDestination.ColdCaseArchive,
         NavigationDestination.Settings
@@ -126,6 +128,13 @@ fun ThemisGameLayout(
                             currentPhase = uiState.currentPhase
                         )
                     }
+                    NavigationDestination.LawAndOrder -> {
+                        LawAndOrderScreen(
+                            uiState = uiState,
+                            onIntent = onIntent,
+                            isDark = isDark
+                        )
+                    }
                     NavigationDestination.Courtroom -> {
                         if (isTablet) {
                             Row(modifier = Modifier.fillMaxSize()) {
@@ -134,8 +143,9 @@ fun ThemisGameLayout(
                                         npcs = uiState.npcList,
                                         currentPhase = uiState.currentPhase,
                                         selectedNpcId = uiState.selectedNpcId,
+                                        legalStatutes = uiState.legalStatutes,
                                         onSelectNpc = { onIntent(ThemisIntent.SelectNpc(it)) },
-                                        onIssueVerdict = { id, convict -> onIntent(ThemisIntent.IssueVerdict(id, convict)) }
+                                        onIssueVerdict = { id, convict, citedClauses -> onIntent(ThemisIntent.IssueVerdict(id, convict, citedClauses)) }
                                     )
                                 }
                                 Box(modifier = Modifier.weight(1.5f)) {
@@ -155,8 +165,9 @@ fun ThemisGameLayout(
                                         npcs = uiState.npcList,
                                         currentPhase = uiState.currentPhase,
                                         selectedNpcId = uiState.selectedNpcId,
+                                        legalStatutes = uiState.legalStatutes,
                                         onSelectNpc = { onIntent(ThemisIntent.SelectNpc(it)) },
-                                        onIssueVerdict = { id, convict -> onIntent(ThemisIntent.IssueVerdict(id, convict)) }
+                                        onIssueVerdict = { id, convict, citedClauses -> onIntent(ThemisIntent.IssueVerdict(id, convict, citedClauses)) }
                                     )
                                 }
                                 Box(modifier = Modifier.weight(1.2f)) {

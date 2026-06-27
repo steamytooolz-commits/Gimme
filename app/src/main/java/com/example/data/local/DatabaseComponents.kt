@@ -110,6 +110,23 @@ data class CaseProgressEntity(
     val degradationLevel: Int
 )
 
+@Entity(tableName = "legal_statutes")
+data class LegalStatuteEntity(
+    @PrimaryKey val id: String,
+    val title: String,
+    val description: String,
+    val clausesJson: String
+)
+
+@Entity(tableName = "newspaper_articles")
+data class NewspaperArticleEntity(
+    @PrimaryKey val id: String,
+    val headline: String,
+    val content: String,
+    val dayPublished: Int,
+    val publicSentimentShift: Float
+)
+
 
 
 // --- Type Converters ---
@@ -311,6 +328,30 @@ interface ColdCaseDigestDao {
     suspend fun insertDigest(digest: ColdCaseDigestEntity)
 }
 
+@Dao
+interface LegalStatuteDao {
+    @Query("SELECT * FROM legal_statutes")
+    fun getAllStatutes(): Flow<List<LegalStatuteEntity>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertStatute(statute: LegalStatuteEntity)
+    
+    @Query("DELETE FROM legal_statutes")
+    suspend fun clearAll()
+}
+
+@Dao
+interface NewspaperArticleDao {
+    @Query("SELECT * FROM newspaper_articles ORDER BY dayPublished DESC")
+    fun getAllArticles(): Flow<List<NewspaperArticleEntity>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertArticle(article: NewspaperArticleEntity)
+
+    @Query("DELETE FROM newspaper_articles")
+    suspend fun clearAll()
+}
+
 // --- Database ---
 
 @Database(
@@ -325,9 +366,11 @@ interface ColdCaseDigestDao {
         WorldBibleEntity::class,
         CaseProgressEntity::class,
         CaseLinkageEntity::class,
-        ColdCaseDigestEntity::class
+        ColdCaseDigestEntity::class,
+        LegalStatuteEntity::class,
+        NewspaperArticleEntity::class
     ],
-    version = 6,
+    version = 7,
     exportSchema = false
 )
 @TypeConverters(ThemisConverters::class)
@@ -343,5 +386,7 @@ abstract class ThemisDatabase : RoomDatabase() {
     abstract fun caseProgressDao(): CaseProgressDao
     abstract fun caseLinkageDao(): CaseLinkageDao
     abstract fun coldCaseDigestDao(): ColdCaseDigestDao
+    abstract fun legalStatuteDao(): LegalStatuteDao
+    abstract fun newspaperArticleDao(): NewspaperArticleDao
 }
 

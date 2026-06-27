@@ -27,10 +27,15 @@ sealed interface ThemisIntent {
     data object ResetGame : ThemisIntent
     data class ChangePhase(val phase: GamePhase) : ThemisIntent
     data class ResolveObjection(val sustain: Boolean) : ThemisIntent
-    data class IssueVerdict(val suspectId: String, val convict: Boolean) : ThemisIntent
+    data class IssueVerdict(val suspectId: String, val convict: Boolean, val citedClauseIds: List<String> = emptyList()) : ThemisIntent
     data class GenerateNewCase(val params: CaseGenerationParameters) : ThemisIntent
     data object ToggleWarrant : ThemisIntent
     data class SelectNpc(val npcId: String?) : ThemisIntent
+
+    // Law and Order Intents
+    data class DraftStatute(val title: String, val description: String, val clauses: List<String>) : ThemisIntent
+    data class AcceptBribe(val suspectId: String, val amount: Int, val description: String) : ThemisIntent
+    data class RefuseBribe(val suspectId: String) : ThemisIntent
 
     // Phase 3 Dossier & Pre-Trial Hearing Intents
     data class ToggleEvidenceSelection(val evidenceId: String) : ThemisIntent
@@ -87,7 +92,9 @@ data class ThemisUiState(
     val generationProgress: String = "",
     val caseProgress: CaseProgress? = null,
     val coldCaseArchive: List<CaseProgress> = emptyList(),
-    val exportedPdfFile: java.io.File? = null
+    val exportedPdfFile: java.io.File? = null,
+    val legalStatutes: List<LegalStatute> = emptyList(),
+    val newspaperArticles: List<NewspaperArticle> = emptyList()
 )
 
 
@@ -108,6 +115,16 @@ class ThemisViewModel(
 
     init {
         // Observe all data flows from DB and combine them into UI State
+        viewModelScope.launch {
+            repository.allStatutes.collect { statutes ->
+                _uiState.update { it.copy(legalStatutes = statutes) }
+            }
+        }
+        viewModelScope.launch {
+            repository.allArticles.collect { articles ->
+                _uiState.update { it.copy(newspaperArticles = articles) }
+            }
+        }
         viewModelScope.launch {
             val existingCaseId = repository.getWorldState("active_case_id")
             if (existingCaseId == null) {
@@ -165,12 +182,15 @@ class ThemisViewModel(
             ThemisIntent.ResetGame -> handleResetGame()
             is ThemisIntent.ChangePhase -> handleChangePhase(intent.phase)
             is ThemisIntent.ResolveObjection -> handleResolveObjection(intent.sustain)
-            is ThemisIntent.IssueVerdict -> handleIssueVerdict(intent.suspectId, intent.convict)
+            is ThemisIntent.IssueVerdict -> handleIssueVerdict(intent.suspectId, intent.convict, intent.citedClauseIds)
             is ThemisIntent.GenerateNewCase -> handleGenerateNewCase(intent.params)
             ThemisIntent.ToggleWarrant -> handleToggleWarrant()
             is ThemisIntent.SelectNpc -> {
                 _uiState.update { it.copy(selectedNpcId = intent.npcId) }
             }
+            is ThemisIntent.DraftStatute -> handleDraftStatute(intent.title, intent.description, intent.clauses)
+            is ThemisIntent.AcceptBribe -> handleAcceptBribe(intent.suspectId, intent.amount, intent.description)
+            is ThemisIntent.RefuseBribe -> handleRefuseBribe(intent.suspectId)
             is ThemisIntent.ToggleEvidenceSelection -> {
                 val currentSelected = _uiState.value.selectedEvidenceIds
                 val newSelected = if (intent.evidenceId in currentSelected) {
@@ -248,10 +268,108 @@ class ThemisViewModel(
         }
     }
 
+    private fun handleDraftStatute(title: String, description: String, clauses: List<String>) {
+        val statuteId = "S-" + (100..999).random()
+        val lawClauses = clauses.mapIndexed { index, text ->
+            val code = ('A' + index)
+            com.example.data.model.LawClause(
+                id = "$statuteId-$code",
+                text = text
+            )
+        }
+        val statute = com.example.data.model.LegalStatute(
+            id = statuteId,
+            title = title,
+            description = description,
+            clauses = lawClauses
+        )
+        viewModelScope.launch {
+            repository.insertStatute(statute)
+            
+            repository.insertMessage(
+                ChatMessage(
+                    id = UUID.randomUUID().toString(),
+                    phase = _uiState.value.currentPhase,
+                    sender = "System",
+                    text = "High Magistrate has drafted Statute $statuteId: '$title'.",
+                    isSystem = true
+                )
+            )
+
+            val article = com.example.data.model.NewspaperArticle(
+                id = "N-" + (100..999).random(),
+                headline = "MAGISTRATE DECREES NEW CODEX: '${title.uppercase()}'",
+                content = "Under Section 5 of the Provincial Charter, the High Magistrate has codified '${title}'. Description: ${description}. The clauses state: ${clauses.joinToString("; ")}. Public reactions are intense as citizens try to adapt.",
+                dayPublished = 1,
+                publicSentimentShift = if (title.contains("Control", ignoreCase = true) || title.contains("Ban", ignoreCase = true)) -5.0f else +5.0f
+            )
+            repository.insertArticle(article)
+        }
+    }
+
+    private fun handleAcceptBribe(suspectId: String, amount: Int, description: String) {
+        viewModelScope.launch {
+            val npc = _uiState.value.npcList.find { it.id == suspectId } ?: return@launch
+            
+            val currentCoi = repository.getWorldState("conflict_of_interest")?.toIntOrNull() ?: 15
+            val newCoi = (currentCoi + 35).coerceIn(0, 100)
+            repository.updateWorldState("conflict_of_interest", newCoi.toString())
+
+            repository.updateNpcStress(suspectId, -30)
+
+            repository.insertMessage(
+                ChatMessage(
+                    id = UUID.randomUUID().toString(),
+                    phase = _uiState.value.currentPhase,
+                    sender = "System",
+                    text = "⚠️ CONFLICT OF INTEREST WARNING: You accepted a shadow bribe of $amount gold coins from ${npc.name}. Recusal probability is now critically elevated.",
+                    isSystem = true
+                )
+            )
+
+            val article = com.example.data.model.NewspaperArticle(
+                id = "N-" + (100..999).random(),
+                headline = "RUMORS OF BACKROOM DEALS IN PALACE LOCKDOWN!",
+                content = "Sources close to the High Magistrate's inquiry allege that substantial sums of coin are changing hands. Is our esteemed judge truly impartial, or is justice for sale to the highest bidder? The shadow of the Great Accord looms large.",
+                dayPublished = 1,
+                publicSentimentShift = -15.0f
+            )
+            repository.insertArticle(article)
+        }
+    }
+
+    private fun handleRefuseBribe(suspectId: String) {
+        viewModelScope.launch {
+            val npc = _uiState.value.npcList.find { it.id == suspectId } ?: return@launch
+            
+            repository.updateNpcStress(suspectId, 25)
+
+            repository.insertMessage(
+                ChatMessage(
+                    id = UUID.randomUUID().toString(),
+                    phase = _uiState.value.currentPhase,
+                    sender = "System",
+                    text = "Righteous Integrity: You refused a bribe from ${npc.name}. Their stress levels have spiked as they realize you cannot be bought.",
+                    isSystem = true
+                )
+            )
+
+            val article = com.example.data.model.NewspaperArticle(
+                id = "N-" + (100..999).random(),
+                headline = "UNBENDING JUSTICE: MAGISTRATE SHUNS CORRUPTION!",
+                content = "Our High Magistrate continues to uphold the purest standards of the Rule of Law. Reports indicate that multiple attempts to bribe the court have been met with swift, righteous refusal. The Court of Themis stands firm against bias.",
+                dayPublished = 1,
+                publicSentimentShift = +12.0f
+            )
+            repository.insertArticle(article)
+        }
+    }
+
     private fun handleResetGame() {
-        _uiState.update { ThemisUiState() }
+        _uiState.update { ThemisUiState().copy(evaluationReport = null, trialVerdict = null) }
         viewModelScope.launch {
             repository.seedInitialData()
+            _uiState.update { it.copy(evaluationReport = null, trialVerdict = null) }
         }
     }
 
@@ -520,7 +638,7 @@ class ThemisViewModel(
         }
     }
 
-    private fun handleIssueVerdict(suspectId: String, convict: Boolean) {
+    private fun handleIssueVerdict(suspectId: String, convict: Boolean, citedClauseIds: List<String> = emptyList()) {
         viewModelScope.launch {
             val npc = _uiState.value.npcList.find { it.id == suspectId } ?: return@launch
             val verdict = if (convict) "CONVICTED" else "ACQUITTED"
@@ -530,7 +648,19 @@ class ThemisViewModel(
             val factsText = buildString {
                 append("The Trial for '$coreCrime' has reached a final verdict. ")
                 append("The Magistrate has $verdict ${npc.name} (${npc.role}).\n")
-                append("Collected Admissible Evidence:\n")
+                if (citedClauseIds.isNotEmpty()) {
+                    append("\nCITED LAW CLAUSES:\n")
+                    citedClauseIds.forEach { clauseId ->
+                        val statute = _uiState.value.legalStatutes.find { s -> s.clauses.any { c -> c.id == clauseId } }
+                        val clause = statute?.clauses?.find { it.id == clauseId }
+                        if (clause != null) {
+                            append("- ${clause.id}: ${clause.text} (under '${statute.title}')\n")
+                        } else {
+                            append("- $clauseId\n")
+                        }
+                    }
+                }
+                append("\nCollected Admissible Evidence:\n")
                 _uiState.value.evidenceList.filter { it.admissibilityStatus == AdmissibilityStatus.ADMISSIBLE }.forEach {
                     append("- ${it.name}: ${it.physicalDescription}\n")
                 }
@@ -543,7 +673,7 @@ class ThemisViewModel(
                     append("- ${it.name}: ${it.stress}% stress\n")
                 }
                 append("\nConflict of Interest / Bias level: ${_uiState.value.conflictOfInterest}%\n")
-                append("\nBased on these facts, summarize the legal correctness, historical justice, and the reaction of the populace in 3-4 powerful, story-rich paragraphs. Evaluate if justice was truly served or if the wrong person was framed.")
+                append("\nBased on these facts, summarize the legal correctness, historical justice, and the reaction of the populace in 3-4 powerful, story-rich paragraphs. Cite the specific law clauses used during the judgment in your decree. Evaluate if justice was truly served or if the wrong person was framed.")
             }
 
             _uiState.update { it.copy(isLoading = true) }

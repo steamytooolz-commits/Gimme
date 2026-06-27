@@ -28,6 +28,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import com.example.data.model.GamePhase
 import com.example.data.model.NPC
+import com.example.ui.theme.AmberAccent
 import com.example.ui.theme.AntiqueBrassGold
 import com.example.ui.theme.CourtSurface
 import com.example.ui.theme.CrimsonAccent
@@ -41,8 +42,9 @@ fun CourtDocket(
     npcs: List<NPC>,
     currentPhase: GamePhase,
     selectedNpcId: String?,
+    legalStatutes: List<com.example.data.model.LegalStatute>,
     onSelectNpc: (String?) -> Unit,
-    onIssueVerdict: (String, Boolean) -> Unit,
+    onIssueVerdict: (String, Boolean, List<String>) -> Unit,
     modifier: Modifier = Modifier
 ) {
     var npcToJudge by remember { mutableStateOf<NPC?>(null) }
@@ -92,9 +94,10 @@ fun CourtDocket(
         VerdictDialog(
             npc = npc,
             currentPhase = currentPhase,
+            legalStatutes = legalStatutes,
             onDismiss = { npcToJudge = null },
-            onConfirmVerdict = { convict ->
-                onIssueVerdict(npc.id, convict)
+            onConfirmVerdict = { convict, citedClauses ->
+                onIssueVerdict(npc.id, convict, citedClauses)
                 npcToJudge = null
             }
         )
@@ -269,15 +272,18 @@ fun NpcDocketCard(
 fun VerdictDialog(
     npc: NPC,
     currentPhase: GamePhase,
+    legalStatutes: List<com.example.data.model.LegalStatute>,
     onDismiss: () -> Unit,
-    onConfirmVerdict: (Boolean) -> Unit
+    onConfirmVerdict: (Boolean, List<String>) -> Unit
 ) {
     val isDark = currentPhase == GamePhase.INVESTIGATION
+    val selectedClauseIds = remember { mutableStateListOf<String>() }
     
     Dialog(onDismissRequest = onDismiss) {
         Surface(
             modifier = Modifier
                 .fillMaxWidth()
+                .padding(vertical = 12.dp)
                 .border(
                     2.dp,
                     if (isDark) AntiqueBrassGold else WarmWoodBrown,
@@ -287,7 +293,9 @@ fun VerdictDialog(
             color = if (isDark) Color(0xFF1E1E24) else CourtSurface
         ) {
             Column(
-                modifier = Modifier.padding(20.dp),
+                modifier = Modifier
+                    .padding(20.dp)
+                    .verticalScroll(rememberScrollState()),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Text(
@@ -305,12 +313,74 @@ fun VerdictDialog(
                 
                 Text(
                     text = "You hold the Golden Gavel over ${npc.name}. As the Investigating Magistrate, you must formally pronounce your final, legally binding decree:",
-                    style = MaterialTheme.typography.bodyLarge,
+                    style = MaterialTheme.typography.bodyMedium,
                     textAlign = TextAlign.Center,
                     color = if (isDark) Color.LightGray else Color.Black
                 )
                 
-                Spacer(modifier = Modifier.height(20.dp))
+                Spacer(modifier = Modifier.height(16.dp))
+
+                // Citing Statutes Section
+                Text(
+                    text = "CITE APPLICABLE CODEX CLAUSES",
+                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace),
+                    color = if (isDark) AntiqueBrassGold else WarmWoodBrown,
+                    modifier = Modifier.align(Alignment.Start).padding(bottom = 8.dp)
+                )
+
+                if (legalStatutes.isEmpty()) {
+                    Text(
+                        text = "No active laws codified.",
+                        fontSize = 11.sp,
+                        color = Color.Gray,
+                        modifier = Modifier.align(Alignment.Start).padding(bottom = 12.dp)
+                    )
+                } else {
+                    legalStatutes.forEach { statute ->
+                        Column(modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
+                            Text(
+                                text = statute.title,
+                                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                                color = if (isDark) Color.White else Color.Black,
+                                modifier = Modifier.padding(bottom = 4.dp)
+                            )
+                            statute.clauses.forEach { clause ->
+                                val isChecked = clause.id in selectedClauseIds
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable {
+                                            if (isChecked) selectedClauseIds.remove(clause.id)
+                                            else selectedClauseIds.add(clause.id)
+                                        }
+                                        .padding(vertical = 2.dp)
+                                ) {
+                                    Checkbox(
+                                        checked = isChecked,
+                                        onCheckedChange = { checked ->
+                                            if (checked == true) selectedClauseIds.add(clause.id)
+                                            else selectedClauseIds.remove(clause.id)
+                                        },
+                                        colors = CheckboxDefaults.colors(
+                                            checkedColor = if (isDark) AmberAccent else WarmWoodBrown
+                                        )
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text(
+                                        text = "${clause.id}: ${clause.text}",
+                                        fontSize = 11.sp,
+                                        lineHeight = 14.sp,
+                                        color = if (isDark) Color.LightGray else Color.DarkGray,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                Spacer(modifier = Modifier.height(16.dp))
                 
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -318,7 +388,7 @@ fun VerdictDialog(
                 ) {
                     // CONVICT Button
                     Button(
-                        onClick = { onConfirmVerdict(true) },
+                        onClick = { onConfirmVerdict(true, selectedClauseIds.toList()) },
                         modifier = Modifier
                             .weight(1f)
                             .height(46.dp)
@@ -329,12 +399,12 @@ fun VerdictDialog(
                         ),
                         shape = RoundedCornerShape(6.dp)
                     ) {
-                        Text("CONVICT GUILTY", style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold))
+                        Text("CONVICT GUILTY", style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold), fontSize = 12.sp)
                     }
 
                     // ACQUIT Button
                     Button(
-                        onClick = { onConfirmVerdict(false) },
+                        onClick = { onConfirmVerdict(false, selectedClauseIds.toList()) },
                         modifier = Modifier
                             .weight(1f)
                             .height(46.dp)
@@ -345,7 +415,7 @@ fun VerdictDialog(
                         ),
                         shape = RoundedCornerShape(6.dp)
                     ) {
-                        Text("ACQUIT INNOCENT", style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold))
+                        Text("ACQUIT INNOCENT", style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold), fontSize = 12.sp)
                     }
                 }
                 

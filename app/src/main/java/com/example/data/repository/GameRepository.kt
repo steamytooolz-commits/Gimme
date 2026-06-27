@@ -1,10 +1,12 @@
 package com.example.data.repository
 
+import androidx.room.withTransaction
 import com.example.data.local.*
 import com.example.data.model.*
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import com.squareup.moshi.Moshi
+import com.squareup.moshi.Types
 import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
 import java.util.UUID
 
@@ -274,15 +276,12 @@ class GameRepository(val db: ThemisDatabase) {
 
     suspend fun seedInitialData() {
         // Clear all first
-        db.evidenceDao().clearAll()
-        db.evidenceLinkDao().clearAll()
-        db.npcDao().clearAll()
-        db.chatMessageDao().clearAll()
-        db.worldStateDao().clearAll()
+        clearCaseData()
 
         // Set state variables
         setGamePhase(GamePhase.INVESTIGATION)
         setGameTime("Day 1, 10:00 AM")
+        updateWorldState("active_case_id", "default_case")
         updateWorldState("conflict_of_interest", "15") // starts low
 
         // Seed NPCs
@@ -346,6 +345,55 @@ class GameRepository(val db: ThemisDatabase) {
                 isSystem = true
             )
         )
+
+        // Seed Legal Statutes
+        insertStatute(
+            LegalStatute(
+                id = "L-104",
+                title = "The Mandrake Control Act",
+                description = "Regulations concerning the possession and preparation of lethal alchemical agents, specifically Mandrake Root derivatives.",
+                clauses = listOf(
+                    LawClause("L-104-A", "Only licensed apothecaries may extract Mandrake Root active agents."),
+                    LawClause("L-104-B", "Unlawful possession of concentrated Mandrake toxin carries a penalty of up to 10 years in the dungeon."),
+                    LawClause("L-104-C", "The sale or administration of unlicensed alchemical mixtures is strictly prohibited.")
+                )
+            )
+        )
+        insertStatute(
+            LegalStatute(
+                id = "A-001",
+                title = "High Treason and Assassination",
+                description = "Severe penalties and definitions for acts of treason, subversion, and murder against high-ranking Peers of the Realm.",
+                clauses = listOf(
+                    LawClause("A-001-A", "Any person who participates, aids, or instigates the assassination of a Peer or Duke of the Province shall suffer death by execution."),
+                    LawClause("A-001-B", "Accomplices who provide the means or chemical agents for such acts shall face equal treason charges."),
+                    LawClause("A-001-C", "Concealing knowledge of a plot against a Peer carries automatic forfeiture of all estates.")
+                )
+            )
+        )
+        insertStatute(
+            LegalStatute(
+                id = "P-202",
+                title = "Search, Seizure and Procedural Mandate",
+                description = "Constitutional rights protecting citizens against unauthorized searches and specifying admissibility of evidence.",
+                clauses = listOf(
+                    LawClause("P-202-A", "No private quarters or sealed letters may be searched without a valid Search Warrant authorized by the High Chancellor."),
+                    LawClause("P-202-B", "Evidence obtained in violation of proper warrant procedures is tainted and inadmissible in any tribunal."),
+                    LawClause("P-202-C", "Consent from the owner of the premises bypasses warrant requirements for simple physical searches.")
+                )
+            )
+        )
+
+        // Seed Newspaper Article
+        insertArticle(
+            NewspaperArticle(
+                id = "N-101",
+                headline = "TRAGEDY AT THE GRAND BANQUET: DUKE STERLING ASSASSINATED!",
+                content = "Province in mourning as Duke Sterling is poisoned. The Palace is in complete lockdown as our High Magistrate begins the official investigation. Rumors swirl of a massive shadow conspiracy involving the Chancellor himself, but will the court find the courage to pursue the powerful, or will they scapegoat the weak?",
+                dayPublished = 1,
+                publicSentimentShift = 0.0f
+            )
+        )
     }
 
     suspend fun getGroundTruth(caseId: String): CaseGroundTruth? {
@@ -403,15 +451,19 @@ class GameRepository(val db: ThemisDatabase) {
     }
 
     suspend fun clearCaseData() {
-        db.evidenceDao().clearAll()
-        db.evidenceLinkDao().clearAll()
-        db.npcDao().clearAll()
-        db.chatMessageDao().clearAll()
-        db.worldStateDao().clearAll()
-        db.groundTruthDao().clearAll()
-        db.caseEvaluationDao().clearAll()
-        db.worldBibleDao().clearAll()
-        db.caseProgressDao().clearAll()
+        db.withTransaction {
+            db.evidenceDao().clearAll()
+            db.evidenceLinkDao().clearAll()
+            db.npcDao().clearAll()
+            db.chatMessageDao().clearAll()
+            db.worldStateDao().clearAll()
+            db.groundTruthDao().clearAll()
+            db.caseEvaluationDao().clearAll()
+            db.worldBibleDao().clearAll()
+            db.caseProgressDao().clearAll()
+            db.legalStatuteDao().clearAll()
+            db.newspaperArticleDao().clearAll()
+        }
     }
 
     suspend fun insertNpcs(npcs: List<NpcEntity>) {
@@ -500,6 +552,62 @@ class GameRepository(val db: ThemisDatabase) {
     private fun deserializeList(str: String): List<String> {
         if (str.isEmpty()) return emptyList()
         return str.split(",")
+    }
+
+    val allStatutes: Flow<List<LegalStatute>> = db.legalStatuteDao().getAllStatutes().map { entities ->
+        val type = Types.newParameterizedType(List::class.java, LawClause::class.java)
+        val adapter = moshi.adapter<List<LawClause>>(type)
+        entities.map { entity ->
+            val clauses = try {
+                adapter.fromJson(entity.clausesJson) ?: emptyList()
+            } catch (e: Exception) {
+                emptyList()
+            }
+            LegalStatute(
+                id = entity.id,
+                title = entity.title,
+                description = entity.description,
+                clauses = clauses
+            )
+        }
+    }
+
+    val allArticles: Flow<List<NewspaperArticle>> = db.newspaperArticleDao().getAllArticles().map { entities ->
+        entities.map { entity ->
+            NewspaperArticle(
+                id = entity.id,
+                headline = entity.headline,
+                content = entity.content,
+                dayPublished = entity.dayPublished,
+                publicSentimentShift = entity.publicSentimentShift
+            )
+        }
+    }
+
+    suspend fun insertStatute(statute: LegalStatute) {
+        val type = Types.newParameterizedType(List::class.java, LawClause::class.java)
+        val adapter = moshi.adapter<List<LawClause>>(type)
+        val json = adapter.toJson(statute.clauses)
+        db.legalStatuteDao().insertStatute(
+            LegalStatuteEntity(
+                id = statute.id,
+                title = statute.title,
+                description = statute.description,
+                clausesJson = json
+            )
+        )
+    }
+
+    suspend fun insertArticle(article: NewspaperArticle) {
+        db.newspaperArticleDao().insertArticle(
+            NewspaperArticleEntity(
+                id = article.id,
+                headline = article.headline,
+                content = article.content,
+                dayPublished = article.dayPublished,
+                publicSentimentShift = article.publicSentimentShift
+            )
+        )
     }
 }
 
