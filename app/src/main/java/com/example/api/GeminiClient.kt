@@ -63,8 +63,9 @@ class GeminiClient {
         val requestMap = mutableMapOf<String, Any>(
             "contents" to contentsList,
             "generationConfig" to mapOf(
-                "temperature" to 0.7f,
-                "topP" to 0.95f
+                "temperature" to 0.8f,
+                "topP" to 0.95f,
+                "maxOutputTokens" to 4096
             ),
             "systemInstruction" to mapOf(
                 "parts" to listOf(mapOf("text" to systemInstruction))
@@ -143,20 +144,8 @@ class GeminiClient {
     }
 
     private fun isToolAllowedInPhase(toolName: String, phase: GamePhase): Boolean {
-        return when (phase) {
-            GamePhase.INVESTIGATION -> {
-                // In investigation, objections are NOT allowed
-                toolName != "trigger_objection"
-            }
-            GamePhase.COURTROOM -> {
-                // In courtroom, adding evidence directly is NOT allowed (must present what was found)
-                toolName != "add_evidence"
-            }
-            GamePhase.COLD -> {
-                // No tools are allowed during a cold case phase
-                false
-            }
-        }
+        // Give the AI API full, unrestricted control to execute any tool or event in any phase!
+        return true
     }
 
     private fun getErrorFallbackResponse(errorMessage: String): GeminiResponse {

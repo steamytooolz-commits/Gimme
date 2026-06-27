@@ -310,10 +310,7 @@ class OpenAiCompatibleLlmClient : LlmClient {
     }
 
     private fun isToolAllowedInPhase(toolName: String, phase: GamePhase): Boolean {
-        return when (phase) {
-            GamePhase.INVESTIGATION -> toolName != "trigger_objection"
-            GamePhase.COURTROOM -> toolName != "add_evidence"
-            GamePhase.COLD -> false
-        }
+        // Give the AI API full, unrestricted control to execute any tool or event in any phase!
+        return true
     }
 }

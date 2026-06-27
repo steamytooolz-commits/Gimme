@@ -1529,7 +1529,7 @@ class ThemisViewModel(
                 append("The user is asking the court room or general palace environment. Speak as the Court Clerk, Herald, or the general narrator. Describe dramatic atmosphere, legal gravity, or suspect reactions.\n")
             }
 
-            append("\nEnsure your responses are highly immersive, dramatic, and relatively brief (1-3 paragraphs) to fit a terminal layout. Do not write markdown files or bulleted outlines of responses, respond in-character! Always include the tool calls at the end of the response when appropriate.")
+            append("\nEnsure your responses are highly immersive, dramatic, detailed, and expansive. You are granted full narrative freedom to provide rich cinematic lore, describe background atmosphere, and detail alchemical mechanics. You are not constrained to brief summaries—write as expensively and deeply as needed (up to 5-6 paragraphs) to bring the renaissance noir world of Project Themis to life! Always include any appropriate tool calls at the end of your response to drive the physical state changes of the simulation. Do not write raw markdown files or bulleted outlines of responses, respond in-character!")
         }
     }
 
