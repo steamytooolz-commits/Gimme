@@ -791,6 +791,18 @@ fun DashboardHeader(
                         style = MaterialTheme.typography.titleLarge.copy(fontSize = 14.sp, fontWeight = FontWeight.Bold),
                         color = if (isDark) Color.White else Color.Black
                     )
+                    Spacer(modifier = Modifier.width(16.dp))
+                    Text(
+                        text = "🪙 ${uiState.magistrateGold}g",
+                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                        color = if (isDark) AmberAccent else Color(0xFFB57C00)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "🗣️ ${uiState.publicSentiment}%",
+                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                        color = Color(0xFF4CAF50)
+                    )
                 }
 
                 // Phase Switcher Gavel Button

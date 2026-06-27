@@ -78,13 +78,22 @@ fun LawAndOrderScreen(
                 }
             }
 
-            // Right Pane: Newspapers & Bribes
+            // Right Pane: Ministry, Newspapers & Bribes
             Column(
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxHeight()
+                    .verticalScroll(rememberScrollState())
                     .padding(16.dp)
             ) {
+                MinistryCabinetSection(
+                    uiState = uiState,
+                    onIntent = onIntent,
+                    isDark = isDark
+                )
+
+                Spacer(modifier = Modifier.height(16.dp))
+
                 BribesAndShadowProposals(
                     npcs = uiState.npcList,
                     onAcceptBribe = { suspectId, amount, desc ->
@@ -128,6 +137,14 @@ fun LawAndOrderScreen(
                         isDark = isDark
                     )
                 }
+
+                Spacer(modifier = Modifier.height(24.dp))
+
+                MinistryCabinetSection(
+                    uiState = uiState,
+                    onIntent = onIntent,
+                    isDark = isDark
+                )
 
                 Spacer(modifier = Modifier.height(24.dp))
 
@@ -622,5 +639,338 @@ fun ProvincialGazette(
                 }
             }
         }
+    }
+}
+
+@Composable
+fun MinistryCabinetSection(
+    uiState: ThemisUiState,
+    onIntent: (ThemisIntent) -> Unit,
+    isDark: Boolean,
+    modifier: Modifier = Modifier
+) {
+    var showTruthSerumDialog by remember { mutableStateOf(false) }
+
+    Card(
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = if (isDark) Color(0xFF1B1B22) else Color.White
+        ),
+        border = androidx.compose.foundation.BorderStroke(1.dp, if (isDark) Color(0xFF2A2A30) else Color.LightGray),
+        modifier = modifier.fillMaxWidth()
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            // Header
+            Text(
+                text = "🏛️ PROVINCIAL MINISTRY OFFICE",
+                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold, fontFamily = FontFamily.Serif),
+                color = if (isDark) AntiqueBrassGold else WarmWoodBrown,
+                modifier = Modifier.padding(bottom = 12.dp)
+            )
+
+            // Resources Grid
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)
+            ) {
+                // Gold Treasury
+                Card(
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(8.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = if (isDark) Color(0xFF2E2616) else Color(0xFFFFFBEA)
+                    ),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFFFB300))
+                ) {
+                    Column(
+                        modifier = Modifier.padding(8.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Text("Personal Treasury", fontSize = 10.sp, color = Color.Gray, fontWeight = FontWeight.Bold)
+                        Text(
+                            text = "🪙 ${uiState.magistrateGold}g",
+                            fontSize = 18.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = if (isDark) AmberAccent else Color(0xFFB57C00),
+                            fontFamily = FontFamily.Serif
+                        )
+                    }
+                }
+
+                // Public Sentiment
+                Card(
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(8.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = if (isDark) Color(0xFF1D291F) else Color(0xFFE8F5E9)
+                    ),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF4CAF50))
+                ) {
+                    Column(
+                        modifier = Modifier.padding(8.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Text("Populace Approval", fontSize = 10.sp, color = Color.Gray, fontWeight = FontWeight.Bold)
+                        Text(
+                            text = "🗣️ ${uiState.publicSentiment}%",
+                            fontSize = 18.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF4CAF50),
+                            fontFamily = FontFamily.Serif
+                        )
+                    }
+                }
+            }
+
+            // Stat bars
+            Text(
+                text = "Bias / Recusal Risk: ${uiState.conflictOfInterest}%",
+                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                color = if (uiState.conflictOfInterest >= 75) CrimsonAccent else if (uiState.conflictOfInterest >= 40) Color(0xFFFFB300) else Color.Gray,
+                modifier = Modifier.padding(bottom = 4.dp)
+            )
+            LinearProgressIndicator(
+                progress = uiState.conflictOfInterest / 100f,
+                color = if (uiState.conflictOfInterest >= 75) CrimsonAccent else if (uiState.conflictOfInterest >= 40) Color(0xFFFFB300) else Color(0xFF4CAF50),
+                trackColor = if (isDark) Color(0xFF2A2A30) else Color.LightGray,
+                modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)).padding(bottom = 12.dp)
+            )
+
+            Divider(color = if (isDark) Color(0xFF2A2A30) else Color.LightGray, thickness = 1.dp, modifier = Modifier.padding(vertical = 8.dp))
+
+            // powers Section
+            Text(
+                text = "MINISTRY EXPENDITURES",
+                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace),
+                color = if (isDark) AntiqueBrassGold else WarmWoodBrown,
+                modifier = Modifier.padding(bottom = 8.dp)
+            )
+
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
+            ) {
+                // Hire Informant
+                Button(
+                    onClick = { onIntent(ThemisIntent.HireInformant) },
+                    enabled = uiState.magistrateGold >= 400,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (isDark) Color(0xFF2A2A35) else Color(0xFFEDE7F6),
+                        contentColor = if (isDark) Color.White else Color(0xFF5E35B1),
+                        disabledContainerColor = if (isDark) Color(0xFF16161B) else Color(0xFFF1F1F1)
+                    ),
+                    shape = RoundedCornerShape(6.dp),
+                    modifier = Modifier.weight(1f).height(44.dp),
+                    contentPadding = PaddingValues(horizontal = 4.dp)
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text("Hire Informant 🕵️", fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                        Text("Cost: 400g", fontSize = 8.sp, color = Color.Gray)
+                    }
+                }
+
+                // Soup Kitchen
+                Button(
+                    onClick = { onIntent(ThemisIntent.FundSoupKitchen) },
+                    enabled = uiState.magistrateGold >= 300,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (isDark) Color(0xFF1D291F) else Color(0xFFE8F5E9),
+                        contentColor = if (isDark) Color.White else Color(0xFF2E7D32),
+                        disabledContainerColor = if (isDark) Color(0xFF16161B) else Color(0xFFF1F1F1)
+                    ),
+                    shape = RoundedCornerShape(6.dp),
+                    modifier = Modifier.weight(1f).height(44.dp),
+                    contentPadding = PaddingValues(horizontal = 4.dp)
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text("Soup Kitchen 🍲", fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                        Text("Cost: 300g", fontSize = 8.sp, color = Color.Gray)
+                    }
+                }
+            }
+
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)
+            ) {
+                // Royal Bodyguards
+                Button(
+                    onClick = { onIntent(ThemisIntent.HireBodyguards) },
+                    enabled = uiState.magistrateGold >= 500,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (isDark) Color(0xFF2E1A1A) else Color(0xFFFFEBEE),
+                        contentColor = if (isDark) Color.White else Color(0xFFC62828),
+                        disabledContainerColor = if (isDark) Color(0xFF16161B) else Color(0xFFF1F1F1)
+                    ),
+                    shape = RoundedCornerShape(6.dp),
+                    modifier = Modifier.weight(1f).height(44.dp),
+                    contentPadding = PaddingValues(horizontal = 4.dp)
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text("Hire Guards 🛡️", fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                        Text("Cost: 500g", fontSize = 8.sp, color = Color.Gray)
+                    }
+                }
+
+                // Buy Truth Serum
+                Button(
+                    onClick = { showTruthSerumDialog = true },
+                    enabled = uiState.magistrateGold >= 600 && uiState.npcList.isNotEmpty(),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (isDark) Color(0xFF2A241A) else Color(0xFFFFF3E0),
+                        contentColor = if (isDark) Color.White else Color(0xFFE65100),
+                        disabledContainerColor = if (isDark) Color(0xFF16161B) else Color(0xFFF1F1F1)
+                    ),
+                    shape = RoundedCornerShape(6.dp),
+                    modifier = Modifier.weight(1f).height(44.dp),
+                    contentPadding = PaddingValues(horizontal = 4.dp)
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text("Veritaserum 🧪", fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                        Text("Cost: 600g", fontSize = 8.sp, color = Color.Gray)
+                    }
+                }
+            }
+
+            Divider(color = if (isDark) Color(0xFF2A2A30) else Color.LightGray, thickness = 1.dp, modifier = Modifier.padding(vertical = 8.dp))
+
+            // Cabinet of contraband
+            Text(
+                text = "🔒 CABINET OF CONTRABAND SEIZURES",
+                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace),
+                color = if (isDark) AntiqueBrassGold else WarmWoodBrown,
+                modifier = Modifier.padding(bottom = 8.dp)
+            )
+
+            if (uiState.contrabandCabinet.isEmpty()) {
+                Text(
+                    text = "Cabinet is currently empty of seized alchemical substances and forbidden ledgers.",
+                    fontSize = 11.sp,
+                    color = Color.Gray,
+                    modifier = Modifier.padding(vertical = 4.dp)
+                )
+            } else {
+                uiState.contrabandCabinet.forEach { contrabandItem ->
+                    Card(
+                        shape = RoundedCornerShape(6.dp),
+                        colors = CardDefaults.cardColors(
+                            containerColor = if (isDark) Color(0xFF22222A) else Color(0xFFF5F5F5)
+                        ),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, if (isDark) Color(0xFF3A3A45) else Color.LightGray),
+                        modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp)
+                    ) {
+                        Column(modifier = Modifier.padding(8.dp)) {
+                            Text(
+                                text = contrabandItem,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = if (isDark) Color.White else Color.Black
+                            )
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Button(
+                                    onClick = { onIntent(ThemisIntent.LiquidateContraband(contrabandItem)) },
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = Color(0xFF388E3C),
+                                        contentColor = Color.White
+                                    ),
+                                    shape = RoundedCornerShape(4.dp),
+                                    modifier = Modifier.weight(1f).height(28.dp),
+                                    contentPadding = PaddingValues(0.dp)
+                               ) {
+                                    Text("Sell: +350g, +10% COI", fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                               }
+
+                               Button(
+                                    onClick = { onIntent(ThemisIntent.IncinerateContraband(contrabandItem)) },
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = CrimsonAccent,
+                                        contentColor = Color.White
+                                    ),
+                                    shape = RoundedCornerShape(4.dp),
+                                    modifier = Modifier.weight(1f).height(28.dp),
+                                    contentPadding = PaddingValues(0.dp)
+                               ) {
+                                    Text("Burn: +8 Appr, -5% COI", fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                               }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Truth Serum Modal Selection Dialog
+    if (showTruthSerumDialog) {
+        AlertDialog(
+            onDismissRequest = { showTruthSerumDialog = false },
+            title = {
+                Text(
+                    "🧪 ADMINISTER ALCHEMICAL VERITASERUM",
+                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold, fontFamily = FontFamily.Serif),
+                    color = if (isDark) AntiqueBrassGold else WarmWoodBrown
+                )
+            },
+            text = {
+                Column {
+                    Text(
+                        "Force a suspect to ingest the volatile Veritaserum formula. Their anxiety spikes to 100% instantly, compelling them to express their hidden motive in the central archives. Cost: 600 Gold Coins.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (isDark) Color.LightGray else Color.DarkGray,
+                        modifier = Modifier.padding(bottom = 12.dp)
+                    )
+                    Text(
+                        "SELECT SUBJECT:",
+                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                        color = Color.Gray,
+                        modifier = Modifier.padding(bottom = 8.dp)
+                    )
+                    uiState.npcList.forEach { npc ->
+                        Card(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(bottom = 6.dp)
+                                .clickable {
+                                    onIntent(ThemisIntent.AdministerTruthSerum(npc.id))
+                                    showTruthSerumDialog = false
+                                },
+                            shape = RoundedCornerShape(6.dp),
+                            colors = CardDefaults.cardColors(
+                                containerColor = if (isDark) Color(0xFF2E1A1A) else Color(0xFFFFEBEE)
+                            ),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, CrimsonAccent)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(10.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column {
+                                    Text(
+                                        text = npc.name,
+                                        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                                        color = if (isDark) Color.White else Color.Black
+                                    )
+                                    Text(
+                                        text = npc.role,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = Color.Gray
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = {
+                TextButton(onClick = { showTruthSerumDialog = false }) {
+                    Text("Close", color = Color.Gray)
+                }
+            }
+        )
     }
 }

@@ -283,6 +283,9 @@ class GameRepository(val db: ThemisDatabase) {
         setGameTime("Day 1, 10:00 AM")
         updateWorldState("active_case_id", "default_case")
         updateWorldState("conflict_of_interest", "15") // starts low
+        updateWorldState("magistrate_gold", "500")
+        updateWorldState("public_sentiment", "50")
+        updateWorldState("contraband_cabinet", "[]")
 
         // Seed NPCs
         val npcs = listOf(
@@ -608,6 +611,12 @@ class GameRepository(val db: ThemisDatabase) {
                 publicSentimentShift = article.publicSentimentShift
             )
         )
+        // Auto-update global public sentiment
+        val currentSentimentStr = db.worldStateDao().getValue("public_sentiment") ?: "50"
+        val currentSentiment = currentSentimentStr.toIntOrNull() ?: 50
+        val shift = article.publicSentimentShift.toInt()
+        val newSentiment = (currentSentiment + shift).coerceIn(0, 100)
+        db.worldStateDao().insertState(WorldStateEntity("public_sentiment", newSentiment.toString()))
     }
 }
 

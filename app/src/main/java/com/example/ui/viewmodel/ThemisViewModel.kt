@@ -52,6 +52,15 @@ sealed interface ThemisIntent {
     // Export Intents
     data object ExportLogToPdf : ThemisIntent
     data object ClearExportedPdf : ThemisIntent
+
+    // Ministry / Magistrate Actions
+    data object HireInformant : ThemisIntent
+    data object FundSoupKitchen : ThemisIntent
+    data object HireBodyguards : ThemisIntent
+    data class LiquidateContraband(val item: String) : ThemisIntent
+    data class IncinerateContraband(val item: String) : ThemisIntent
+    data class PublishPropaganda(val promoType: Int) : ThemisIntent
+    data class AdministerTruthSerum(val npcId: String) : ThemisIntent
 }
 
 // --- Active Objection State ---
@@ -94,7 +103,10 @@ data class ThemisUiState(
     val coldCaseArchive: List<CaseProgress> = emptyList(),
     val exportedPdfFile: java.io.File? = null,
     val legalStatutes: List<LegalStatute> = emptyList(),
-    val newspaperArticles: List<NewspaperArticle> = emptyList()
+    val newspaperArticles: List<NewspaperArticle> = emptyList(),
+    val magistrateGold: Int = 500,
+    val publicSentiment: Int = 50,
+    val contrabandCabinet: List<String> = emptyList()
 )
 
 
@@ -145,6 +157,16 @@ class ThemisViewModel(
                 val groundTruth = repository.getGroundTruth(caseId)
                 val evalReport = repository.getEvaluationReport(caseId)
                 
+                val gold = repository.getWorldState("magistrate_gold")?.toIntOrNull() ?: 500
+                val sentiment = repository.getWorldState("public_sentiment")?.toIntOrNull() ?: 50
+                val contrabandJson = repository.getWorldState("contraband_cabinet") ?: "[]"
+                val contrabandList = try {
+                    moshi.adapter<List<String>>(Types.newParameterizedType(List::class.java, String::class.java))
+                        .fromJson(contrabandJson) ?: emptyList()
+                } catch (e: Exception) {
+                    emptyList()
+                }
+                
                 _uiState.value.copy(
                     evidenceList = evidence,
                     npcList = npcs,
@@ -155,7 +177,10 @@ class ThemisViewModel(
                     conflictOfInterest = coi,
                     activeCaseId = caseId,
                     caseGroundTruth = groundTruth,
-                    evaluationReport = evalReport
+                    evaluationReport = evalReport,
+                    magistrateGold = gold,
+                    publicSentiment = sentiment,
+                    contrabandCabinet = contrabandList
                 )
             }.collect { combinedState ->
                 _uiState.update { it.copy(
@@ -168,7 +193,10 @@ class ThemisViewModel(
                     conflictOfInterest = combinedState.conflictOfInterest,
                     activeCaseId = combinedState.activeCaseId,
                     caseGroundTruth = combinedState.caseGroundTruth,
-                    evaluationReport = combinedState.evaluationReport
+                    evaluationReport = combinedState.evaluationReport,
+                    magistrateGold = combinedState.magistrateGold,
+                    publicSentiment = combinedState.publicSentiment,
+                    contrabandCabinet = combinedState.contrabandCabinet
                 ) }
                 refreshCaseProgress(combinedState.activeCaseId)
             }
@@ -191,6 +219,13 @@ class ThemisViewModel(
             is ThemisIntent.DraftStatute -> handleDraftStatute(intent.title, intent.description, intent.clauses)
             is ThemisIntent.AcceptBribe -> handleAcceptBribe(intent.suspectId, intent.amount, intent.description)
             is ThemisIntent.RefuseBribe -> handleRefuseBribe(intent.suspectId)
+            ThemisIntent.HireInformant -> handleHireInformant()
+            ThemisIntent.FundSoupKitchen -> handleFundSoupKitchen()
+            ThemisIntent.HireBodyguards -> handleHireBodyguards()
+            is ThemisIntent.LiquidateContraband -> handleLiquidateContraband(intent.item)
+            is ThemisIntent.IncinerateContraband -> handleIncinerateContraband(intent.item)
+            is ThemisIntent.PublishPropaganda -> handlePublishPropaganda(intent.promoType)
+            is ThemisIntent.AdministerTruthSerum -> handleAdministerTruthSerum(intent.npcId)
             is ThemisIntent.ToggleEvidenceSelection -> {
                 val currentSelected = _uiState.value.selectedEvidenceIds
                 val newSelected = if (intent.evidenceId in currentSelected) {
@@ -315,6 +350,10 @@ class ThemisViewModel(
             val newCoi = (currentCoi + 35).coerceIn(0, 100)
             repository.updateWorldState("conflict_of_interest", newCoi.toString())
 
+            // Increase gold!
+            val currentGold = repository.getWorldState("magistrate_gold")?.toIntOrNull() ?: 500
+            repository.updateWorldState("magistrate_gold", (currentGold + amount).toString())
+
             repository.updateNpcStress(suspectId, -30)
 
             repository.insertMessage(
@@ -362,6 +401,256 @@ class ThemisViewModel(
                 publicSentimentShift = +12.0f
             )
             repository.insertArticle(article)
+        }
+    }
+
+    private fun handleHireInformant() {
+        viewModelScope.launch {
+            val currentGold = repository.getWorldState("magistrate_gold")?.toIntOrNull() ?: 500
+            if (currentGold < 400) {
+                _uiState.update { it.copy(errorMessage = "Insufficient gold to hire an informant!") }
+                return@launch
+            }
+            repository.updateWorldState("magistrate_gold", (currentGold - 400).toString())
+
+            // Get a suspect to expose
+            val npcs = _uiState.value.npcList
+            if (npcs.isEmpty()) return@launch
+            val targetNpc = npcs.random()
+
+            // Uncover secrets
+            val secretText = "🕵️ SHADOW REPORT: Informant uncovers that ${targetNpc.name} (${targetNpc.role})'s hidden motive is: '${targetNpc.hiddenMotive}'. Also, their anxiety/stress has increased by +15% due to the secret investigation."
+            repository.updateNpcStress(targetNpc.id, 15)
+
+            repository.insertMessage(
+                ChatMessage(
+                    id = UUID.randomUUID().toString(),
+                    phase = _uiState.value.currentPhase,
+                    sender = "System",
+                    text = secretText,
+                    isSystem = true
+                )
+            )
+        }
+    }
+
+    private fun handleFundSoupKitchen() {
+        viewModelScope.launch {
+            val currentGold = repository.getWorldState("magistrate_gold")?.toIntOrNull() ?: 500
+            if (currentGold < 300) {
+                _uiState.update { it.copy(errorMessage = "Insufficient gold to fund soup kitchens!") }
+                return@launch
+            }
+            repository.updateWorldState("magistrate_gold", (currentGold - 300).toString())
+
+            val currentCoi = repository.getWorldState("conflict_of_interest")?.toIntOrNull() ?: 15
+            repository.updateWorldState("conflict_of_interest", (currentCoi - 10).coerceAtLeast(0).toString())
+
+            val article = com.example.data.model.NewspaperArticle(
+                id = "N-" + (100..999).random(),
+                headline = "MAGISTRATE OPENS CHARITY SOUP KITCHENS!",
+                content = "In a heartening act of local charity, the High Magistrate has sponsored lavish soup kitchens across the poorer quarters. Citizens celebrate this profound benevolence, praising the High Magistrate as a champion of the people.",
+                dayPublished = 1,
+                publicSentimentShift = 15.0f
+            )
+            repository.insertArticle(article)
+
+            repository.insertMessage(
+                ChatMessage(
+                    id = UUID.randomUUID().toString(),
+                    phase = _uiState.value.currentPhase,
+                    sender = "System",
+                    text = "💖 CHARITY FUNDED: Spent 300 Gold. Bias / COI decreased by 10%. Public sentiment surged!",
+                    isSystem = true
+                )
+            )
+        }
+    }
+
+    private fun handleHireBodyguards() {
+        viewModelScope.launch {
+            val currentGold = repository.getWorldState("magistrate_gold")?.toIntOrNull() ?: 500
+            if (currentGold < 500) {
+                _uiState.update { it.copy(errorMessage = "Insufficient gold to hire royal bodyguards!") }
+                return@launch
+            }
+            repository.updateWorldState("magistrate_gold", (currentGold - 500).toString())
+
+            val currentCoi = repository.getWorldState("conflict_of_interest")?.toIntOrNull() ?: 15
+            repository.updateWorldState("conflict_of_interest", (currentCoi - 15).coerceAtLeast(0).toString())
+
+            repository.insertMessage(
+                ChatMessage(
+                    id = UUID.randomUUID().toString(),
+                    phase = _uiState.value.currentPhase,
+                    sender = "System",
+                    text = "🛡️ ROYAL PRAETORIANS ENLISTED: Spent 500 Gold. Elite bodyguards protect the chambers. Your visible conflict of interest / recusal threat has decreased by 15%.",
+                    isSystem = true
+                )
+            )
+        }
+    }
+
+    private fun handleLiquidateContraband(item: String) {
+        viewModelScope.launch {
+            val currentContrabandJson = repository.getWorldState("contraband_cabinet") ?: "[]"
+            val currentList = try {
+                moshi.adapter<List<String>>(Types.newParameterizedType(List::class.java, String::class.java))
+                    .fromJson(currentContrabandJson)?.toMutableList() ?: mutableListOf()
+            } catch (e: Exception) {
+                mutableListOf()
+            }
+
+            if (!currentList.contains(item)) return@launch
+            currentList.remove(item)
+
+            val newJson = moshi.adapter<List<String>>(Types.newParameterizedType(List::class.java, String::class.java))
+                .toJson(currentList)
+            repository.updateWorldState("contraband_cabinet", newJson)
+
+            val currentGold = repository.getWorldState("magistrate_gold")?.toIntOrNull() ?: 500
+            repository.updateWorldState("magistrate_gold", (currentGold + 350).toString())
+
+            val currentCoi = repository.getWorldState("conflict_of_interest")?.toIntOrNull() ?: 15
+            repository.updateWorldState("conflict_of_interest", (currentCoi + 10).coerceAtMost(100).toString())
+
+            repository.insertMessage(
+                ChatMessage(
+                    id = UUID.randomUUID().toString(),
+                    phase = _uiState.value.currentPhase,
+                    sender = "System",
+                    text = "💰 CONTRABAND SOLD: Slipped '$item' to black market smugglers for +350 Gold! However, your Conflict of Interest rose by 10%.",
+                    isSystem = true
+                )
+            )
+        }
+    }
+
+    private fun handleIncinerateContraband(item: String) {
+        viewModelScope.launch {
+            val currentContrabandJson = repository.getWorldState("contraband_cabinet") ?: "[]"
+            val currentList = try {
+                moshi.adapter<List<String>>(Types.newParameterizedType(List::class.java, String::class.java))
+                    .fromJson(currentContrabandJson)?.toMutableList() ?: mutableListOf()
+            } catch (e: Exception) {
+                mutableListOf()
+            }
+
+            if (!currentList.contains(item)) return@launch
+            currentList.remove(item)
+
+            val newJson = moshi.adapter<List<String>>(Types.newParameterizedType(List::class.java, String::class.java))
+                .toJson(currentList)
+            repository.updateWorldState("contraband_cabinet", newJson)
+
+            val currentCoi = repository.getWorldState("conflict_of_interest")?.toIntOrNull() ?: 15
+            repository.updateWorldState("conflict_of_interest", (currentCoi - 5).coerceAtLeast(0).toString())
+
+            val article = com.example.data.model.NewspaperArticle(
+                id = "N-" + (100..999).random(),
+                headline = "FORBIDDEN SUBSTANCES PUBLICLY INCINERATED!",
+                content = "Under strict supervision, the High Magistrate oversaw the destruction of confiscated alchemical ingredients and forbidden ledgers. The bonfire illuminated the central plaza as a symbol of absolute order and provincial security.",
+                dayPublished = 1,
+                publicSentimentShift = 8.0f
+            )
+            repository.insertArticle(article)
+
+            repository.insertMessage(
+                ChatMessage(
+                    id = UUID.randomUUID().toString(),
+                    phase = _uiState.value.currentPhase,
+                    sender = "System",
+                    text = "🔥 CONTRABAND INCINERATED: Publicly burned '$item'. Public sentiment increased, bias decreased by 5%.",
+                    isSystem = true
+                )
+            )
+        }
+    }
+
+    private fun handlePublishPropaganda(promoType: Int) {
+        viewModelScope.launch {
+            val currentGold = repository.getWorldState("magistrate_gold")?.toIntOrNull() ?: 500
+            if (currentGold < 200) {
+                _uiState.update { it.copy(errorMessage = "Insufficient gold to run propaganda!") }
+                return@launch
+            }
+            repository.updateWorldState("magistrate_gold", (currentGold - 200).toString())
+
+            val article = when (promoType) {
+                1 -> com.example.data.model.NewspaperArticle(
+                    id = "N-" + (100..999).random(),
+                    headline = "MAGISTRATE DECREES: HEAVENLY COURT IS SPOTLESS!",
+                    content = "A paid editorial in the Provincial Gazette asserts that the current Magistrate's inquiry is a paragon of celestial fairness. Rumors of corruption are dismissed as the jealousy of hostile neighboring domains.",
+                    dayPublished = 1,
+                    publicSentimentShift = 10.0f
+                )
+                2 -> {
+                    val npcs = _uiState.value.npcList
+                    if (npcs.isNotEmpty()) {
+                        val scape = npcs.random()
+                        repository.updateNpcStress(scape.id, 30)
+                    }
+                    com.example.data.model.NewspaperArticle(
+                        id = "N-" + (100..999).random(),
+                        headline = "OFFICIALS WARN: SUBVERSIVE ELEMENTS PLOT FROM WITHIN!",
+                        content = "A special administrative bulletin suggests that several individuals under investigation are displaying extreme nervous guilt. High-stress profiles indicate that confessions are expected momentarily as the court closes in.",
+                        dayPublished = 1,
+                        publicSentimentShift = 2.0f
+                    )
+                }
+                else -> com.example.data.model.NewspaperArticle(
+                    id = "N-" + (100..999).random(),
+                    headline = "MAGISTRAL INQUIRY PROGRESSING WITHOUT ERROR!",
+                    content = "The Ministry of Justice releases a glowing progress statement, praising the efficient alchemical forensics and rigorous legal processes currently underway.",
+                    dayPublished = 1,
+                    publicSentimentShift = 5.0f
+                )
+            }
+            repository.insertArticle(article)
+
+            repository.insertMessage(
+                ChatMessage(
+                    id = UUID.randomUUID().toString(),
+                    phase = _uiState.value.currentPhase,
+                    sender = "System",
+                    text = "📢 PROPAGANDA ISSUED: Spent 200 Gold. Gazette printed a custom editorial to shift public opinion and stress suspects.",
+                    isSystem = true
+                )
+            )
+        }
+    }
+
+    private fun handleAdministerTruthSerum(npcId: String) {
+        viewModelScope.launch {
+            val currentGold = repository.getWorldState("magistrate_gold")?.toIntOrNull() ?: 500
+            if (currentGold < 600) {
+                _uiState.update { it.copy(errorMessage = "Insufficient gold to purchase Veritaserum!") }
+                return@launch
+            }
+            repository.updateWorldState("magistrate_gold", (currentGold - 600).toString())
+
+            val npc = _uiState.value.npcList.find { it.id == npcId } ?: return@launch
+
+            repository.updateNpcStress(npcId, 100 - npc.stress)
+
+            repository.insertMessage(
+                ChatMessage(
+                    id = UUID.randomUUID().toString(),
+                    phase = _uiState.value.currentPhase,
+                    sender = "System",
+                    text = "🧪 ALCHEMICAL INTERVENTION: Administered Veritaserum (Alchemical Truth Serum) to ${npc.name}! Their heart rates spike to 100% and they are programmatically incapable of deceit.",
+                    isSystem = true
+                )
+            )
+
+            repository.insertMessage(
+                ChatMessage(
+                    id = UUID.randomUUID().toString(),
+                    phase = _uiState.value.currentPhase,
+                    sender = npc.name,
+                    text = "My head... my veins feel like liquid fire! I can't... I can't hold back the absolute truth! I will confess: ${npc.hiddenMotive}. God forgive me..."
+                )
+            )
         }
     }
 
@@ -905,6 +1194,39 @@ class ThemisViewModel(
                             isSystem = true
                         )
                     )
+
+                    // 60% chance to also seize contraband
+                    val contrabandNames = listOf(
+                        "Mandrake Elixir Vial",
+                        "Forbidden Alchemical Formula",
+                        "Smuggled Black Lotus Powder",
+                        "Corrupt Guard's Ledger",
+                        "Restricted Mercury Compound"
+                    )
+                    if (Math.random() < 0.60) {
+                        val contrabandItem = contrabandNames.random()
+                        val currentContrabandJson = repository.getWorldState("contraband_cabinet") ?: "[]"
+                        val currentList = try {
+                            moshi.adapter<List<String>>(Types.newParameterizedType(List::class.java, String::class.java))
+                                .fromJson(currentContrabandJson)?.toMutableList() ?: mutableListOf()
+                        } catch (e: Exception) {
+                            mutableListOf()
+                        }
+                        currentList.add(contrabandItem)
+                        val newJson = moshi.adapter<List<String>>(Types.newParameterizedType(List::class.java, String::class.java))
+                            .toJson(currentList)
+                        repository.updateWorldState("contraband_cabinet", newJson)
+                        
+                        repository.insertMessage(
+                            ChatMessage(
+                                id = UUID.randomUUID().toString(),
+                                phase = _uiState.value.currentPhase,
+                                sender = "System",
+                                text = "⚖️ CONTRABAND CONFISCATED: Seized '$contrabandItem' during the search. It has been locked away in your Cabinet of Contraband.",
+                                isSystem = true
+                            )
+                        )
+                    }
                 }
                 "modify_npc_stress" -> {
                     val npcId = tool.args["npc_id"] as? String ?: ""
@@ -961,6 +1283,144 @@ class ThemisViewModel(
                         repository.updateWorldState(key, value)
                     }
                 }
+                "modify_gold" -> {
+                    val amount = (tool.args["amount"] as? Double)?.toInt() ?: 0
+                    val reason = tool.args["reason"] as? String ?: "Magistracy event"
+                    if (amount != 0) {
+                        val currentGold = repository.getWorldState("magistrate_gold")?.toIntOrNull() ?: 500
+                        val nextGold = (currentGold + amount).coerceAtLeast(0)
+                        repository.updateWorldState("magistrate_gold", nextGold.toString())
+                        
+                        repository.insertMessage(
+                            ChatMessage(
+                                id = UUID.randomUUID().toString(),
+                                phase = _uiState.value.currentPhase,
+                                sender = "System",
+                                text = if (amount > 0) "🪙 GOLD EARNED: +${amount} gold coins due to '$reason'. New treasury: ${nextGold}g"
+                                       else "💸 GOLD LOST: ${-amount} gold coins deducted due to '$reason'. New treasury: ${nextGold}g",
+                                isSystem = true
+                            )
+                        )
+                    }
+                }
+                "modify_sentiment" -> {
+                    val delta = (tool.args["delta"] as? Double)?.toInt() ?: 0
+                    val reason = tool.args["reason"] as? String ?: "Court reaction"
+                    if (delta != 0) {
+                        val currentSentiment = repository.getWorldState("public_sentiment")?.toIntOrNull() ?: 50
+                        val nextSentiment = (currentSentiment + delta).coerceIn(0, 100)
+                        repository.updateWorldState("public_sentiment", nextSentiment.toString())
+                        
+                        repository.insertMessage(
+                            ChatMessage(
+                                id = UUID.randomUUID().toString(),
+                                phase = _uiState.value.currentPhase,
+                                sender = "System",
+                                text = if (delta > 0) "🗣️ PUBLIC APPROVAL ROSE: +${delta}% approval shift due to '$reason'. New sentiment: ${nextSentiment}%"
+                                       else "🗣️ PUBLIC APPROVAL FELL: ${delta}% approval shift due to '$reason'. New sentiment: ${nextSentiment}%",
+                                isSystem = true
+                            )
+                        )
+                    }
+                }
+                "seize_contraband" -> {
+                    val itemName = tool.args["item_name"] as? String ?: "Mysterious Alchemical Powder"
+                    val reason = tool.args["reason"] as? String ?: "uncovered secret compartment"
+                    
+                    val currentContrabandJson = repository.getWorldState("contraband_cabinet") ?: "[]"
+                    val currentList = try {
+                        moshi.adapter<List<String>>(Types.newParameterizedType(List::class.java, String::class.java))
+                            .fromJson(currentContrabandJson)?.toMutableList() ?: mutableListOf()
+                    } catch (e: Exception) {
+                        mutableListOf()
+                    }
+                    currentList.add(itemName)
+                    val newJson = moshi.adapter<List<String>>(Types.newParameterizedType(List::class.java, String::class.java))
+                        .toJson(currentList)
+                    repository.updateWorldState("contraband_cabinet", newJson)
+                    
+                    repository.insertMessage(
+                        ChatMessage(
+                            id = UUID.randomUUID().toString(),
+                            phase = _uiState.value.currentPhase,
+                            sender = "System",
+                            text = "⚖️ CONTRABAND SEIZED BY GAME DIRECTOR: Locked away '$itemName' in your Cabinet of Contraband due to '$reason'.",
+                            isSystem = true
+                        )
+                    )
+                }
+                "trigger_event" -> {
+                    val eventName = tool.args["event_name"] as? String ?: "Unexpected Event"
+                    val description = tool.args["description"] as? String ?: "Something changes in the palace."
+                    
+                    repository.insertMessage(
+                        ChatMessage(
+                            id = UUID.randomUUID().toString(),
+                            phase = _uiState.value.currentPhase,
+                            sender = "Crisis Event: $eventName",
+                            text = "🚨 CRISIS EVENT TRIGGERED BY DIRECTOR:\n$description"
+                        )
+                    )
+
+                    val lowerName = eventName.lowercase()
+                    if (lowerName.contains("audit")) {
+                        val currentCoi = repository.getWorldState("conflict_of_interest")?.toIntOrNull() ?: 15
+                        val currentGold = repository.getWorldState("magistrate_gold")?.toIntOrNull() ?: 500
+                        if (currentCoi >= 50) {
+                            val fine = 250
+                            val nextGold = (currentGold - fine).coerceAtLeast(0)
+                            repository.updateWorldState("magistrate_gold", nextGold.toString())
+                            repository.insertMessage(
+                                ChatMessage(
+                                    id = UUID.randomUUID().toString(),
+                                    phase = _uiState.value.currentPhase,
+                                    sender = "System",
+                                    text = "📉 AUDIT FAILURE: The Crown inspectors found severe conflicts of interest! Fined $fine Gold Coins. Current gold: ${nextGold}g.",
+                                    isSystem = true
+                                )
+                            )
+                        } else {
+                            val reward = 200
+                            val nextGold = currentGold + reward
+                            repository.updateWorldState("magistrate_gold", nextGold.toString())
+                            repository.insertMessage(
+                                ChatMessage(
+                                    id = UUID.randomUUID().toString(),
+                                    phase = _uiState.value.currentPhase,
+                                    sender = "System",
+                                    text = "📈 AUDIT SUCCESS: Your clean magistrate record impressed the inspectors! Rewarded $reward Gold Coins. Current gold: ${nextGold}g.",
+                                    isSystem = true
+                                )
+                            )
+                        }
+                    } else if (lowerName.contains("leak") || lowerName.contains("poison") || lowerName.contains("meltdown")) {
+                        val currentSentiment = repository.getWorldState("public_sentiment")?.toIntOrNull() ?: 50
+                        val nextSentiment = (currentSentiment - 15).coerceAtLeast(0)
+                        repository.updateWorldState("public_sentiment", nextSentiment.toString())
+                        repository.insertMessage(
+                            ChatMessage(
+                                id = UUID.randomUUID().toString(),
+                                phase = _uiState.value.currentPhase,
+                                sender = "System",
+                                text = "☣️ ALCHEMICAL MELTDOWN: Fumes from the toxic vaults leaked into the lower town. Populace Approval dropped by 15%!",
+                                isSystem = true
+                            )
+                        )
+                    } else if (lowerName.contains("riot") || lowerName.contains("unrest")) {
+                        _uiState.value.npcList.forEach { npc ->
+                            repository.updateNpcStress(npc.id, 25)
+                        }
+                        repository.insertMessage(
+                            ChatMessage(
+                                id = UUID.randomUUID().toString(),
+                                phase = _uiState.value.currentPhase,
+                                sender = "System",
+                                text = "🔥 URBAN UNREST: Angry citizens are shouting outside the gates. All suspects' stress has increased by +25% due to the chaos!",
+                                isSystem = true
+                            )
+                        )
+                    }
+                }
             }
         }
     }
@@ -1008,7 +1468,12 @@ class ThemisViewModel(
             append("You are the AI Game Director for 'Project Themis', a grim, noir text-based detective-magistrate simulation game set in a renaissance-like Palace.\n")
             append("The current game phase is: ${_uiState.value.currentPhase.name}.\n")
             append("Current time in-game: ${_uiState.value.currentTime}.\n")
-            append("Current search warrant status: ${if (_uiState.value.hasSearchWarrantActive) "ACTIVE (searches are procedural)" else "INACTIVE (searches violate procedure unless stated)"}.\n\n")
+            append("Current search warrant status: ${if (_uiState.value.hasSearchWarrantActive) "ACTIVE (searches are procedural)" else "INACTIVE (searches violate procedure unless stated)"}.\n")
+            append("MAGISTRATE RESOURCES:\n")
+            append("- Personal Treasury Gold: ${_uiState.value.magistrateGold}g\n")
+            append("- Populace Sentiment Approval: ${_uiState.value.publicSentiment}%\n")
+            append("- Bias/Recusal Risk (COI): ${_uiState.value.conflictOfInterest}%\n")
+            append("- Cabinet of Contraband Seizures: ${_uiState.value.contrabandCabinet.joinToString(", ").ifEmpty { "Empty" }}\n\n")
             
             val progress = _uiState.value.caseProgress
             if (progress != null && progress.degradationLevel > 0) {
@@ -1046,7 +1511,11 @@ class ThemisViewModel(
             append("3. modify_npc_stress(npc_id: String, delta: Int) - Delta can be negative or positive.\n")
             append("4. trigger_objection(type: String, target_witness: String) - Only allowed in COURTROOM phase. Types: HEARSAY, LEADING, IRRELEVANT, SPECULATION.\n")
             append("5. update_world_state(key: String, value: String) - Set flags for plot points.\n")
-            append("6. simulate_action(action_type: String, outcome_description: String) - Executes one of the 150+ AI actions to progress the simulation (see lexicon below).\n\n")
+            append("6. simulate_action(action_type: String, outcome_description: String) - Executes one of the 150+ AI actions to progress the simulation (see lexicon below).\n")
+            append("7. modify_gold(amount: Int, reason: String) - Dynamically fine the player or award/bribe them based on their actions, threats, or dramatic roleplay turns.\n")
+            append("8. modify_sentiment(delta: Int, reason: String) - Shift public sentiment approval (-100 to +100) dynamically based on the drama, trial responses, or general conduct.\n")
+            append("9. seize_contraband(item_name: String, reason: String) - Directly seize alchemical/smuggled contraband and place it inside the Cabinet of Contraband.\n")
+            append("10. trigger_event(event_name: String, description: String) - DM / Director special events like 'Royal Audit', 'Alchemical Meltdown' or 'Urban Unrest' to inject high-stakes chaos into the playthrough.\n\n")
             
             append(com.example.domain.AiActionLexicon.FULL_LEXICON)
             append("\n\n")
