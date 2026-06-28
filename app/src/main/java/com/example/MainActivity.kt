@@ -34,26 +34,12 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
-        llmClient = OpenAiCompatibleLlmClient(applicationContext)
-
-        // Initialize Google Mobile Ads SDK
-        try {
-            MobileAds.initialize(this) {}
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
-
-        // 1. Manually instantiate database, repository, secure storage, and LLM Client (Clean manual DI)
-        database = Room.databaseBuilder(
-            applicationContext,
-            ThemisDatabase::class.java,
-            "themis_db"
-        )
-        .fallbackToDestructiveMigration()
-        .build()
-
-        repository = GameRepository(database)
-        secureStorageRepository = SecureStorageRepositoryImpl(applicationContext)
+        // Retrieve singletons from custom Application class (Clean Service Locator pattern)
+        val app = application as ThemisApplication
+        database = app.database
+        repository = app.repository
+        secureStorageRepository = app.secureStorageRepository
+        llmClient = app.llmClient
 
         // 2. Instantiate ViewModels using their Factories
         val themisFactory = ThemisViewModelFactory(application, repository, secureStorageRepository, llmClient)

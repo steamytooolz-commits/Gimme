@@ -84,7 +84,9 @@ fun SettingsScreen(
     LaunchedEffect(downloadedFiles) {
         downloadedFiles.forEach { file ->
             if (!verificationStates.containsKey(file.name)) {
-                LiquidOnDeviceSdk.verifyFileIntegrity(context, file)
+                scope.launch {
+                    LiquidOnDeviceSdk.verifyFileIntegrity(context, file)
+                }
             }
         }
     }
@@ -891,7 +893,9 @@ fun SettingsScreen(
                                                                 Button(
                                                                     onClick = {
                                                                         if (manualVerifyRepoId.isNotEmpty()) {
-                                                                            LiquidOnDeviceSdk.verifyFileIntegrity(context, file, manualVerifyRepoId.trim())
+                                                                            scope.launch {
+                                                                                LiquidOnDeviceSdk.verifyFileIntegrity(context, file, manualVerifyRepoId.trim())
+                                                                            }
                                                                         }
                                                                     },
                                                                     colors = ButtonDefaults.buttonColors(
@@ -910,7 +914,9 @@ fun SettingsScreen(
                                                 } else {
                                                     Button(
                                                         onClick = {
-                                                            LiquidOnDeviceSdk.verifyFileIntegrity(context, file)
+                                                            scope.launch {
+                                                                LiquidOnDeviceSdk.verifyFileIntegrity(context, file)
+                                                            }
                                                         },
                                                         colors = ButtonDefaults.buttonColors(
                                                             containerColor = Color.Transparent,

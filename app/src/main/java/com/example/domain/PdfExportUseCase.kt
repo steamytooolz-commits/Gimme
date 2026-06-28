@@ -110,7 +110,7 @@ class PdfExportUseCase(private val repository: GameRepository) {
 
         pdfDocument.finishPage(page)
 
-        val downloadsDir = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS)
+        val downloadsDir = context.getExternalFilesDir(android.os.Environment.DIRECTORY_DOWNLOADS) ?: context.filesDir
         val file = File(downloadsDir, "Case_Export_${caseId}_${System.currentTimeMillis()}.pdf")
         val outputStream = FileOutputStream(file)
         pdfDocument.writeTo(outputStream)

@@ -5,6 +5,7 @@ import android.os.Environment
 import android.util.Log
 import com.squareup.moshi.Moshi
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
+import okhttp3.RequestBody.Companion.toRequestBody
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
@@ -66,11 +67,12 @@ class LiquidEdgeService private constructor() {
         Log.i(TAG, "Initializing Liquid Edge SDK Pipeline for model: $fileName")
         
         val appFile = File(LiquidOnDeviceSdk.getModelDirectory(context), fileName)
-        val publicFile = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), fileName)
+        val publicDir = LiquidOnDeviceSdk.getPublicDownloadsDirectorySafely()
+        val publicFile = if (publicDir != null) File(publicDir, fileName) else null
         
         val modelFile = when {
             appFile.exists() -> appFile
-            publicFile.exists() -> publicFile
+            publicFile != null && publicFile.exists() -> publicFile
             else -> {
                 val errorMsg = "Model file $fileName not found on local disk storage channels."
                 Log.e(TAG, errorMsg)
@@ -252,12 +254,10 @@ class LiquidEdgeService private constructor() {
             )
             
             val hfUrl = "https://api-inference.huggingface.co/models/HuggingFaceH4/zephyr-7b-beta"
+            val jsonPayload = moshi.adapter(Map::class.java).toJson(requestMap)
             val hfRequest = okhttp3.Request.Builder()
                 .url(hfUrl)
-                .post(okhttp3.RequestBody.create(
-                    "application/json".toMediaTypeOrNull(),
-                    moshi.adapter(Map::class.java).toJson(requestMap)
-                ))
+                .post(jsonPayload.toRequestBody("application/json".toMediaTypeOrNull()))
                 .build()
             
             val response = okhttp3.OkHttpClient().newCall(hfRequest).execute()

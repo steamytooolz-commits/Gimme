@@ -126,6 +126,19 @@ class LiquidOnDeviceSdk {
         private var isInitialized = false
 
         /**
+         * Safely attempts to access the public downloads directory.
+         * Falls back gracefully to null if scoped storage or permissions restrict access.
+         */
+        fun getPublicDownloadsDirectorySafely(): File? {
+            return try {
+                Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+            } catch (e: Exception) {
+                Log.w("LiquidOnDeviceSdk", "Public downloads directory is inaccessible: ${e.localizedMessage}")
+                null
+            }
+        }
+
+        /**
          * Resolves the primary directory where model files are stored.
          * Falls back gracefully to ensure 100% crash-free file access.
          */
@@ -158,8 +171,8 @@ class LiquidOnDeviceSdk {
                     file.isFile && (file.name.endsWith(".bin") || file.name.endsWith(".gguf") || file.name.contains("lfm"))
                 }?.toList() ?: emptyList()
 
-                val publicDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
-                val publicFiles = if (publicDir.exists()) {
+                val publicDir = getPublicDownloadsDirectorySafely()
+                val publicFiles = if (publicDir != null && publicDir.exists()) {
                     publicDir.listFiles { file ->
                         file.isFile && (file.name.endsWith(".bin") || file.name.endsWith(".gguf") || file.name.contains("lfm"))
                     }?.toList() ?: emptyList()
@@ -267,9 +280,7 @@ class LiquidOnDeviceSdk {
             }
         }
 
-        fun verifyFileIntegrity(context: Context, file: File, repoIdInput: String? = null) {
-            val coroutineScope = kotlinx.coroutines.CoroutineScope(Dispatchers.Default)
-            coroutineScope.launch {
+        suspend fun verifyFileIntegrity(context: Context, file: File, repoIdInput: String? = null) = withContext(Dispatchers.Default) {
                 val fileName = file.name
                 _verificationStates.value = _verificationStates.value + (fileName to FileVerificationState(fileName, "Verifying...", 0f, "Checking file and contacting Hugging Face..."))
                 
@@ -321,7 +332,7 @@ class LiquidOnDeviceSdk {
                         progress = 1f,
                         details = "Sideloaded file. File size on disk is ${String.format("%.1f MB", sizeMb)}.$localGgufInfo\n\nAdd HuggingFace Repo ID to verify SHA-256."
                     ))
-                    return@launch
+                    return@withContext
                 }
                 
                 _verificationStates.value = _verificationStates.value + (fileName to FileVerificationState(fileName, "Verifying...", 0.2f, "Fetching metadata from repo: $repoId..."))
@@ -336,7 +347,7 @@ class LiquidOnDeviceSdk {
                         progress = 1f,
                         details = "Could not find file '$fileName' in HuggingFace repo '$repoId'. Check repository ID or filename."
                     ))
-                    return@launch
+                    return@withContext
                 }
                 
                 expectedSize = hfMatch.sizeBytes
@@ -355,7 +366,7 @@ class LiquidOnDeviceSdk {
                         progress = 1f,
                         details = "Size mismatch! Expected ${expectedSize / (1024*1024)}MB but actual is ${actualSize / (1024*1024)}MB. Please redownload."
                     ))
-                    return@launch
+                    return@withContext
                 }
                 
                 if (expectedSha256.isEmpty()) {
@@ -365,7 +376,7 @@ class LiquidOnDeviceSdk {
                         progress = 1f,
                         details = "File size matched Hugging Face metadata exactly (${String.format("%.1f MB", actualSize / (1024f * 1024f))}). SHA-256 not available on HF."
                     ))
-                    return@launch
+                    return@withContext
                 }
                 
                 _verificationStates.value = _verificationStates.value + (fileName to FileVerificationState(fileName, "Computing Hash...", 0.5f, "Hashing local blocks..."))
@@ -418,7 +429,6 @@ class LiquidOnDeviceSdk {
                     ))
                 }
             }
-        }
 
         fun setActiveModel(context: Context, fileName: String) {
             _activeModelFileName.value = fileName
@@ -508,11 +518,18 @@ class LiquidOnDeviceSdk {
         }
 
         // Primary: Public Downloads Directory
-        val publicDownloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
-        var file = File(publicDownloadsDir, fileName)
+        val publicDownloadsDir = getPublicDownloadsDirectorySafely()
+        var file = if (publicDownloadsDir != null) {
+            File(publicDownloadsDir, fileName)
+        } else {
+            File(getModelDirectory(context), fileName)
+        }
         var out: OutputStream? = null
 
         try {
+            if (publicDownloadsDir == null) {
+                throw Exception("Public downloads directory is inaccessible.")
+            }
             if (!publicDownloadsDir.exists()) {
                 publicDownloadsDir.mkdirs()
             }
@@ -629,10 +646,11 @@ class LiquidOnDeviceSdk {
     fun deleteModel(context: Context, fileName: String): Boolean {
         try {
             val appFile = File(getModelDirectory(context), fileName)
-            val publicFile = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), fileName)
+            val publicDir = getPublicDownloadsDirectorySafely()
+            val publicFile = if (publicDir != null) File(publicDir, fileName) else null
             
             val appDeleted = if (appFile.exists()) appFile.delete() else false
-            val publicDeleted = if (publicFile.exists()) publicFile.delete() else false
+            val publicDeleted = if (publicFile != null && publicFile.exists()) publicFile.delete() else false
             
             if (_activeModelFileName.value == fileName) {
                 _activeModelFileName.value = ""

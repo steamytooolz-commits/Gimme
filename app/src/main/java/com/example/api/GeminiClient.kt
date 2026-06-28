@@ -144,8 +144,26 @@ class GeminiClient {
     }
 
     private fun isToolAllowedInPhase(toolName: String, phase: GamePhase): Boolean {
-        // Give the AI API full, unrestricted control to execute any tool or event in any phase!
-        return true
+        val normalized = toolName.lowercase()
+        return when (phase) {
+            GamePhase.INVESTIGATION -> {
+                // Allow investigative, forensics, and interrogation tools. Block verdict/objection tools.
+                !normalized.contains("verdict") && 
+                !normalized.contains("objection") && 
+                !normalized.contains("ruling") && 
+                !normalized.contains("sentence")
+            }
+            GamePhase.COURTROOM -> {
+                // Allow court, trial, and ruling tools. Block raw raid/warrant/field gather tools.
+                !normalized.contains("warrant") && 
+                !normalized.contains("raid") && 
+                !normalized.contains("gather_raw")
+            }
+            GamePhase.COLD -> {
+                // Cold case: only view/query allowed
+                normalized.contains("query") || normalized.contains("view") || normalized.contains("read")
+            }
+        }
     }
 
     private fun getErrorFallbackResponse(errorMessage: String): GeminiResponse {
