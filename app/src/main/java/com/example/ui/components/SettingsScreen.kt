@@ -44,13 +44,24 @@ fun SettingsScreen(
     onAdUnitIdChange: (String) -> Unit,
     onUseSimulatedAdsChange: (Boolean) -> Unit,
     onAdsEnabledChange: (Boolean) -> Unit,
+    onBack: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val scrollState = rememberScrollState()
     var isApiKeyVisible by remember { mutableStateOf(false) }
     var hasUserEditedSinceTest by remember { mutableStateOf(false) }
+    val context = androidx.compose.ui.platform.LocalContext.current
 
-    val presets = listOf("OpenAI", "OpenRouter", "Anthropic", "G4F", "Custom / Local (Ollama)")
+    val presets = listOf(
+        "OpenAI",
+        "OpenRouter",
+        "Anthropic",
+        "G4F",
+        "Liquid AI Developer API",
+        "Liquid LFM (Local Ollama)",
+        "Liquid LFM On-Device SDK",
+        "Custom / Local (Ollama)"
+    )
 
     Box(
         modifier = modifier
@@ -68,6 +79,17 @@ fun SettingsScreen(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.padding(bottom = 16.dp)
             ) {
+                IconButton(
+                    onClick = onBack,
+                    modifier = Modifier.testTag("settings_back_btn")
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.ArrowBack,
+                        contentDescription = "Back",
+                        tint = if (isDark) Color.White else Color.Black
+                    )
+                }
+                Spacer(modifier = Modifier.width(4.dp))
                 Icon(
                     imageVector = Icons.Default.Settings,
                     contentDescription = "Settings",
@@ -112,7 +134,10 @@ fun SettingsScreen(
                         "OpenRouter" -> uiState.config.providerName == "OpenRouter" && uiState.config.baseUrl.contains("openrouter")
                         "Anthropic" -> uiState.config.providerName == "Anthropic" && uiState.config.baseUrl.contains("anthropic")
                         "G4F" -> uiState.config.providerName == "G4F" && uiState.config.baseUrl.contains("g4f")
-                        else -> uiState.config.providerName == "Custom / Local" || (!uiState.config.baseUrl.contains("openai") && !uiState.config.baseUrl.contains("openrouter") && !uiState.config.baseUrl.contains("anthropic") && !uiState.config.baseUrl.contains("g4f"))
+                        "Liquid AI Developer API" -> uiState.config.providerName == "Liquid AI Developer API"
+                        "Liquid LFM (Local Ollama)" -> uiState.config.providerName == "Liquid LFM (Local Ollama)"
+                        "Liquid LFM On-Device SDK" -> uiState.config.providerName == "Liquid LFM On-Device SDK"
+                        else -> uiState.config.providerName == "Custom / Local (Ollama)" || (!uiState.config.baseUrl.contains("openai") && !uiState.config.baseUrl.contains("openrouter") && !uiState.config.baseUrl.contains("anthropic") && !uiState.config.baseUrl.contains("g4f") && !uiState.config.baseUrl.contains("liquid") && uiState.config.providerName != "Liquid LFM (Local Ollama)" && uiState.config.providerName != "Liquid LFM On-Device SDK")
                     }
 
                     OutlinedButton(
@@ -151,11 +176,35 @@ fun SettingsScreen(
                                         requiresApiKey = false
                                     )
                                 )
+                                "Liquid AI Developer API" -> onConfigChange(
+                                    LlmEndpointConfig(
+                                        providerName = "Liquid AI Developer API",
+                                        baseUrl = "https://api.liquid.ai/v1/",
+                                        modelName = "liquid-lfm-3b",
+                                        requiresApiKey = true
+                                    )
+                                )
+                                "Liquid LFM (Local Ollama)" -> onConfigChange(
+                                    LlmEndpointConfig(
+                                        providerName = "Liquid LFM (Local Ollama)",
+                                        baseUrl = "http://10.0.2.2:11434/v1/",
+                                        modelName = "lfm2.5:350m",
+                                        requiresApiKey = false
+                                    )
+                                )
+                                "Liquid LFM On-Device SDK" -> onConfigChange(
+                                    LlmEndpointConfig(
+                                        providerName = "Liquid LFM On-Device SDK",
+                                        baseUrl = "liquid://on-device",
+                                        modelName = "lfm2.5:350m",
+                                        requiresApiKey = false
+                                    )
+                                )
                                 else -> onConfigChange(
                                     LlmEndpointConfig(
-                                        providerName = "Custom / Local",
+                                        providerName = "Custom / Local (Ollama)",
                                         baseUrl = "http://10.0.2.2:11434/v1/",
-                                        modelName = "llama3",
+                                        modelName = "lfm2.5",
                                         requiresApiKey = false
                                     )
                                 )
@@ -782,11 +831,14 @@ fun SettingsScreen(
                     Text("Test Connection", fontSize = 13.sp, fontWeight = FontWeight.Bold)
                 }
 
-                // Save Settings Button (Only enabled if connection is verified successfully, or if we have a valid input)
-                val isSaveEnabled = uiState.connectionStatus is ConnectionStatus.Success || (!hasUserEditedSinceTest && uiState.apiKey.isNotEmpty())
+                // Save Settings Button
                 Button(
-                    onClick = onSaveSettings,
-                    enabled = true, // Keep it clickable but we can warn, or as user said: "Only enabled if connection test passes or if user is editing valid" - actually let's enable it or strictly follow user's rule! Let's strictly follow: "Only enabled if the connection test passes or if the user is editing an existing valid config" - we can use isSaveEnabled.
+                    onClick = {
+                        onSaveSettings()
+                        android.widget.Toast.makeText(context, "Configuration saved successfully!", android.widget.Toast.LENGTH_SHORT).show()
+                        onBack()
+                    },
+                    enabled = true,
                     colors = ButtonDefaults.buttonColors(
                         containerColor = if (isDark) AmberAccent else WarmWoodBrown,
                         contentColor = if (isDark) Color.Black else Color.White,

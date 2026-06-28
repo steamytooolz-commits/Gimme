@@ -49,12 +49,33 @@ class OpenAiCompatibleLlmClient : LlmClient {
     // Delegate for Gemini API fallback
     private val geminiClient = GeminiClient()
 
+    // Delegate for Liquid LFM On-Device SDK
+    private val liquidOnDeviceSdk = LiquidOnDeviceSdk()
+
     override suspend fun streamChatCompletion(
         messages: List<ChatMessage>,
         tools: List<ToolDefinition>,
         config: LlmEndpointConfig,
         apiKey: String
     ): Flow<LlmStreamEvent> = flow {
+        if (config.providerName == "Liquid LFM On-Device SDK" || config.baseUrl == "liquid://on-device") {
+            try {
+                val fullPrompt = buildString {
+                    for (msg in messages) {
+                        append(msg.sender.uppercase()).append(": ").append(msg.text).append("\n")
+                    }
+                    append("ASSISTANT:")
+                }
+                liquidOnDeviceSdk.streamCompletion(fullPrompt).collect { chunk ->
+                    emit(LlmStreamEvent.ContentChunk(chunk))
+                }
+                emit(LlmStreamEvent.StreamEnd)
+            } catch (e: Exception) {
+                emit(LlmStreamEvent.StreamError(e.localizedMessage ?: "On-device streaming error"))
+            }
+            return@flow
+        }
+
         val url = if (config.baseUrl.endsWith("/")) "${config.baseUrl}chat/completions" else "${config.baseUrl}/chat/completions"
         
         val openAiMessages = messages.map { msg ->
@@ -131,6 +152,10 @@ class OpenAiCompatibleLlmClient : LlmClient {
     }.flowOn(Dispatchers.IO)
 
     override suspend fun validateConnection(config: LlmEndpointConfig, apiKey: String): Result<List<String>> = withContext(Dispatchers.IO) {
+        if (config.providerName == "Liquid LFM On-Device SDK" || config.baseUrl == "liquid://on-device") {
+            return@withContext Result.success(listOf("lfm2.5:350m", "lfm2.5"))
+        }
+
         // For G4F, we skip real network validation as it frequently triggers rate limits or returns 500
         // on validation/models endpoints. We allow the user to proceed with their manual config.
         if (config.providerName == "G4F") {
@@ -211,6 +236,29 @@ class OpenAiCompatibleLlmClient : LlmClient {
         // Fallback to local Gemini client if BYOK config is not set or empty
         if (config == null || config.providerName.isEmpty() || config.baseUrl.isEmpty()) {
             return@withContext geminiClient.generateGameResponse(systemInstruction, history, currentPhase)
+        }
+
+        // Special handling for On-Device Liquid SDK preset
+        if (config.providerName == "Liquid LFM On-Device SDK" || config.baseUrl == "liquid://on-device") {
+            try {
+                val fullPrompt = buildString {
+                    append("SYSTEM: ").append(systemInstruction).append("\n\n")
+                    for ((role, text) in history) {
+                        append(role.uppercase()).append(": ").append(text).append("\n")
+                    }
+                    append("ASSISTANT:")
+                }
+                val rawText = liquidOnDeviceSdk.generateCompletion(
+                    prompt = fullPrompt,
+                    temperature = config.temperature,
+                    maxTokens = config.maxTokens
+                )
+                Log.d(tag, "Local On-Device Liquid LFM Response generated successfully.")
+                return@withContext parseResponseText(rawText, currentPhase)
+            } catch (e: Exception) {
+                Log.e(tag, "Local On-Device Liquid LFM Generation failed. Falling back to Gemini.", e)
+                return@withContext geminiClient.generateGameResponse(systemInstruction, history, currentPhase)
+            }
         }
 
         val url = if (config.baseUrl.endsWith("/")) "${config.baseUrl}chat/completions" else "${config.baseUrl}/chat/completions"

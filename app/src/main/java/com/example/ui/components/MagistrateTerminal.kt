@@ -320,7 +320,8 @@ fun TerminalMessageItem(message: ChatMessage, currentPhase: GamePhase) {
                     )
                     .background(bubbleBg)
                     .padding(12.dp)
-                    .widthIn(max = 280.dp)
+                    .widthIn(max = 480.dp)
+                    .fillMaxWidth(0.85f)
             ) {
                 Text(
                     text = message.text,

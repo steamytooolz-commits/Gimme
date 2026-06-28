@@ -65,8 +65,9 @@ class WorldGenesisPipeline(
         coldCaseDigest: com.example.data.model.ColdCaseDigest? = null,
         onProgress: (String) -> Unit
     ): Result<WorldBible> = withContext(Dispatchers.Default) {
-        val hasApiKey = apiKey.isNotEmpty() && apiKey != "MY_GEMINI_API_KEY"
-        if (!hasApiKey) {
+        val needsApiKey = config?.requiresApiKey ?: true
+        val isApiKeyPresent = apiKey.isNotEmpty() && apiKey != "MY_GEMINI_API_KEY"
+        if (needsApiKey && !isApiKeyPresent) {
             onProgress("No API Key detected. Generating high-fidelity procedural offline mystery...")
             return@withContext Result.success(generateOfflineWorldBible(params))
         }
@@ -212,12 +213,39 @@ class WorldGenesisPipeline(
     private suspend fun generateLlmJson(prompt: String, apiKey: String, config: LlmEndpointConfig?): String {
         val resp = llmClient.generateGameResponse(prompt, emptyList(), GamePhase.INVESTIGATION, config, apiKey)
         var cleanText = resp.textResponse.trim()
-        if (cleanText.startsWith("```json")) {
+        if (cleanText.contains("```json")) {
             cleanText = cleanText.substringAfter("```json").substringBeforeLast("```")
-        } else if (cleanText.startsWith("```")) {
+        } else if (cleanText.contains("```")) {
             cleanText = cleanText.substringAfter("```").substringBeforeLast("```")
         }
+        cleanText = extractJsonBlock(cleanText)
         return cleanText.trim()
+    }
+
+    private fun extractJsonBlock(text: String): String {
+        val trimmed = text.trim()
+        
+        // Find first occurrence of '{' or '['
+        val firstBrace = trimmed.indexOf('{')
+        val firstBracket = trimmed.indexOf('[')
+        
+        val startIndex = when {
+            firstBrace == -1 -> firstBracket
+            firstBracket == -1 -> firstBrace
+            else -> minOf(firstBrace, firstBracket)
+        }
+        
+        if (startIndex == -1) return trimmed // Fallback to original
+        
+        // Find last occurrence of '}' or ']'
+        val lastBrace = trimmed.lastIndexOf('}')
+        val lastBracket = trimmed.lastIndexOf(']')
+        
+        val endIndex = maxOf(lastBrace, lastBracket)
+        
+        if (endIndex == -1 || endIndex <= startIndex) return trimmed
+        
+        return trimmed.substring(startIndex, endIndex + 1)
     }
 
     // --- Parsing Helpers ---

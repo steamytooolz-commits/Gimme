@@ -71,6 +71,15 @@ fun ThemisGameLayout(
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
     val scope = rememberCoroutineScope()
     var isCaseGeneratorActive by remember { mutableStateOf(false) }
+    var hasInitiatedGeneration by remember { mutableStateOf(false) }
+
+    LaunchedEffect(uiState.isGeneratingCase) {
+        if (!uiState.isGeneratingCase && isCaseGeneratorActive && hasInitiatedGeneration) {
+            hasInitiatedGeneration = false
+            isCaseGeneratorActive = false
+            currentDestination = NavigationDestination.Investigation
+        }
+    }
 
     val isDark = uiState.currentPhase == GamePhase.INVESTIGATION
     val configuration = LocalConfiguration.current
@@ -207,7 +216,8 @@ fun ThemisGameLayout(
                             onThemeChange = onThemeChange,
                             onAdUnitIdChange = onAdUnitIdChange,
                             onUseSimulatedAdsChange = onUseSimulatedAdsChange,
-                            onAdsEnabledChange = onAdsEnabledChange
+                            onAdsEnabledChange = onAdsEnabledChange,
+                            onBack = { currentDestination = NavigationDestination.Dashboard }
                         )
                     }
                 }
@@ -468,9 +478,8 @@ fun ThemisGameLayout(
                 isDark = isDark,
                 onBack = { isCaseGeneratorActive = false },
                 onGenerate = { params ->
+                    hasInitiatedGeneration = true
                     onIntent(ThemisIntent.GenerateNewCase(params))
-                    isCaseGeneratorActive = false
-                    currentDestination = NavigationDestination.Investigation
                 },
                 isGenerating = uiState.isGeneratingCase,
                 progressText = uiState.generationProgress,

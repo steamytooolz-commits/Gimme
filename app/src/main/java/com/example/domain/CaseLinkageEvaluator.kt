@@ -45,12 +45,12 @@ class CaseLinkageEvaluator(
             val response = llmClient.generateGameResponse(prompt, emptyList(), GamePhase.COLD, null, apiKey)
             
             var cleanText = response.textResponse.trim()
-            if (cleanText.startsWith("```json")) {
+            if (cleanText.contains("```json")) {
                 cleanText = cleanText.substringAfter("```json").substringBeforeLast("```")
-            } else if (cleanText.startsWith("```")) {
+            } else if (cleanText.contains("```")) {
                 cleanText = cleanText.substringAfter("```").substringBeforeLast("```")
             }
-            cleanText = cleanText.trim()
+            cleanText = extractJsonBlock(cleanText)
             
             val adapter = moshi.adapter(ColdCaseDigest::class.java)
             val digest = adapter.fromJson(cleanText)
@@ -63,5 +63,22 @@ class CaseLinkageEvaluator(
             e.printStackTrace()
             null
         }
+    }
+
+    private fun extractJsonBlock(text: String): String {
+        val trimmed = text.trim()
+        val firstBrace = trimmed.indexOf('{')
+        val firstBracket = trimmed.indexOf('[')
+        val startIndex = when {
+            firstBrace == -1 -> firstBracket
+            firstBracket == -1 -> firstBrace
+            else -> minOf(firstBrace, firstBracket)
+        }
+        if (startIndex == -1) return trimmed
+        val lastBrace = trimmed.lastIndexOf('}')
+        val lastBracket = trimmed.lastIndexOf(']')
+        val endIndex = maxOf(lastBrace, lastBracket)
+        if (endIndex == -1 || endIndex <= startIndex) return trimmed
+        return trimmed.substring(startIndex, endIndex + 1)
     }
 }
