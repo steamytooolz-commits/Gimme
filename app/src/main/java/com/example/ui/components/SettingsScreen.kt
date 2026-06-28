@@ -1,6 +1,7 @@
 package com.example.ui.components
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -58,6 +59,16 @@ fun SettingsScreen(
     val lfmProgress by LiquidOnDeviceSdk.downloadProgress.collectAsState()
     val lfmSpeed by LiquidOnDeviceSdk.downloadSpeed.collectAsState()
     val lfmEta by LiquidOnDeviceSdk.downloadEta.collectAsState()
+    val downloadedFiles by LiquidOnDeviceSdk.downloadedFiles.collectAsState()
+    val activeModelFileName by LiquidOnDeviceSdk.activeModelFileName.collectAsState()
+    val activeModelInfo by LiquidOnDeviceSdk.activeModelInfo.collectAsState()
+
+    var selectedPresetIndex by remember { mutableIntStateOf(0) }
+    var useCustomUrl by remember { mutableStateOf(false) }
+    var customUrlInput by remember { mutableStateOf("") }
+    var customFileNameInput by remember { mutableStateOf("") }
+    var customSizeInput by remember { mutableStateOf("175") }
+
     val scope = rememberCoroutineScope()
     var localTestPrompt by remember { mutableStateOf("Verify if suspect Jax has a valid alibi for central magistrate breach.") }
     var localTestResponse by remember { mutableStateOf("") }
@@ -264,7 +275,7 @@ fun SettingsScreen(
             }
 
             if (uiState.config.providerName == "Liquid LFM On-Device SDK") {
-                // Render custom Liquid LFM Model Downloader UI
+                // Render advanced Liquid LFM Model Controller & Downloader UI
                 Card(
                     colors = CardDefaults.cardColors(
                         containerColor = if (isDark) Color(0xFF16161B) else Color.White
@@ -301,14 +312,11 @@ fun SettingsScreen(
                         }
 
                         Text(
-                            text = "Model: Liquid LFM 2.5 (350M parameters)\n" +
-                                    "Quantization: 4-bit (GGUF file signature)\n" +
-                                    "Memory Requirement: ~512 MB RAM\n" +
-                                    "Local Disk Footprint: 175 MB compressed",
+                            text = "Download any LFM model directly into your device's public Downloads directory or app sandbox. You can manage multiple weights on disk and load any model into RAM for local offline game-logic evaluation.",
                             fontSize = 12.sp,
                             style = MaterialTheme.typography.bodyMedium,
                             color = if (isDark) Color.LightGray else Color.DarkGray,
-                            lineHeight = 18.sp,
+                            lineHeight = 16.sp,
                             modifier = Modifier.padding(bottom = 16.dp)
                         )
 
@@ -317,119 +325,220 @@ fun SettingsScreen(
                             modifier = Modifier.padding(bottom = 16.dp)
                         )
 
+                        // SECTION 1: DOWNLOAD A NEW MODEL
                         Text(
-                            text = "Current Status:",
+                            text = "1. DOWNLOAD & ADD NEW WEIGHTS",
                             fontSize = 11.sp,
                             fontWeight = FontWeight.Bold,
-                            color = if (isDark) Color.Gray else Color.DarkGray,
-                            modifier = Modifier.padding(bottom = 4.dp)
+                            color = if (isDark) AmberAccent else WarmWoodBrown,
+                            modifier = Modifier.padding(bottom = 10.dp)
                         )
 
-                        // Render status-based visuals
-                        when (lfmStatus) {
-                            LiquidOnDeviceSdk.ModelStatus.NOT_DOWNLOADED -> {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    modifier = Modifier.padding(bottom = 16.dp)
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.Warning,
-                                        contentDescription = "Missing",
-                                        tint = Color(0xFFE57373),
-                                        modifier = Modifier.size(18.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Text(
-                                        text = "Model weights not found on local disk.",
-                                        fontSize = 13.sp,
-                                        fontWeight = FontWeight.Medium,
-                                        color = if (isDark) Color.White else Color.Black
-                                    )
-                                }
+                        // Preset Selection Rows
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(bottom = 10.dp)
+                        ) {
+                            Checkbox(
+                                checked = useCustomUrl,
+                                onCheckedChange = { useCustomUrl = it },
+                                colors = CheckboxDefaults.colors(
+                                    checkedColor = if (isDark) AmberAccent else WarmWoodBrown
+                                )
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = "Use Custom HuggingFace / HTTP URL",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = if (isDark) Color.White else Color.Black
+                            )
+                        }
 
-                                Button(
-                                    onClick = {
-                                        scope.launch {
-                                            LiquidOnDeviceSdk().startDownload(context)
+                        if (!useCustomUrl) {
+                            // Render presets dropdown
+                            Text(
+                                text = "Select Preset Model:",
+                                fontSize = 11.sp,
+                                color = if (isDark) Color.Gray else Color.DarkGray,
+                                modifier = Modifier.padding(bottom = 4.dp)
+                            )
+                            LiquidOnDeviceSdk.PRESETS.forEachIndexed { idx, preset ->
+                                val isPresetSelected = idx == selectedPresetIndex
+                                Card(
+                                    colors = CardDefaults.cardColors(
+                                        containerColor = if (isPresetSelected) {
+                                            if (isDark) Color(0xFF23232A) else Color(0xFFF1F1F1)
+                                        } else {
+                                            Color.Transparent
                                         }
-                                    },
-                                    colors = ButtonDefaults.buttonColors(
-                                        containerColor = if (isDark) AmberAccent else WarmWoodBrown,
-                                        contentColor = if (isDark) Color.Black else Color.White
                                     ),
-                                    shape = RoundedCornerShape(8.dp),
+                                    border = androidx.compose.foundation.BorderStroke(
+                                        width = 1.dp,
+                                        color = if (isPresetSelected) (if (isDark) AmberAccent else WarmWoodBrown) else Color.Transparent
+                                    ),
+                                    shape = RoundedCornerShape(6.dp),
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .height(44.dp)
-                                        .testTag("download_lfm_btn")
+                                        .padding(bottom = 6.dp)
+                                        .clickable { selectedPresetIndex = idx }
                                 ) {
-                                    Icon(
-                                        imageVector = Icons.Default.PlayArrow,
-                                        contentDescription = "Download",
-                                        modifier = Modifier.size(18.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Row(
+                                        modifier = Modifier.padding(8.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        RadioButton(
+                                            selected = isPresetSelected,
+                                            onClick = { selectedPresetIndex = idx },
+                                            colors = RadioButtonDefaults.colors(
+                                                selectedColor = if (isDark) AmberAccent else WarmWoodBrown
+                                            )
+                                        )
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Column {
+                                            Text(
+                                                text = preset.displayName,
+                                                fontSize = 12.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = if (isDark) Color.White else Color.Black
+                                            )
+                                            Text(
+                                                text = preset.description,
+                                                fontSize = 11.sp,
+                                                color = if (isDark) Color.LightGray else Color.DarkGray
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        } else {
+                            // Custom input fields
+                            Text(
+                                text = "Enter Custom Download URL:",
+                                fontSize = 11.sp,
+                                color = if (isDark) Color.Gray else Color.DarkGray,
+                                modifier = Modifier.padding(bottom = 4.dp)
+                            )
+                            OutlinedTextField(
+                                value = customUrlInput,
+                                onValueChange = { customUrlInput = it },
+                                singleLine = true,
+                                placeholder = { Text("https://example.com/lfm.gguf") },
+                                textStyle = MaterialTheme.typography.bodySmall,
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedBorderColor = if (isDark) AmberAccent else WarmWoodBrown,
+                                    unfocusedBorderColor = if (isDark) Color.DarkGray else Color.Gray,
+                                    focusedTextColor = if (isDark) Color.White else Color.Black,
+                                    unfocusedTextColor = if (isDark) Color.White else Color.Black
+                                ),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(bottom = 10.dp)
+                            )
+
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Column(modifier = Modifier.weight(1.5f)) {
                                     Text(
-                                        text = "Download LFM Model Weights",
-                                        fontSize = 13.sp,
-                                        fontWeight = FontWeight.Bold
+                                        text = "File Name (e.g. custom.gguf):",
+                                        fontSize = 11.sp,
+                                        color = if (isDark) Color.Gray else Color.DarkGray,
+                                        modifier = Modifier.padding(bottom = 4.dp)
+                                    )
+                                    OutlinedTextField(
+                                        value = customFileNameInput,
+                                        onValueChange = { customFileNameInput = it },
+                                        singleLine = true,
+                                        placeholder = { Text("model.gguf") },
+                                        textStyle = MaterialTheme.typography.bodySmall,
+                                        colors = OutlinedTextFieldDefaults.colors(
+                                            focusedBorderColor = if (isDark) AmberAccent else WarmWoodBrown,
+                                            focusedTextColor = if (isDark) Color.White else Color.Black
+                                        ),
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+                                }
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = "Model Size (MB):",
+                                        fontSize = 11.sp,
+                                        color = if (isDark) Color.Gray else Color.DarkGray,
+                                        modifier = Modifier.padding(bottom = 4.dp)
+                                    )
+                                    OutlinedTextField(
+                                        value = customSizeInput,
+                                        onValueChange = { customSizeInput = it },
+                                        singleLine = true,
+                                        placeholder = { Text("175") },
+                                        textStyle = MaterialTheme.typography.bodySmall,
+                                        colors = OutlinedTextFieldDefaults.colors(
+                                            focusedBorderColor = if (isDark) AmberAccent else WarmWoodBrown,
+                                            focusedTextColor = if (isDark) Color.White else Color.Black
+                                        ),
+                                        modifier = Modifier.fillMaxWidth()
                                     )
                                 }
                             }
-                            LiquidOnDeviceSdk.ModelStatus.DOWNLOADING -> {
-                                Column(modifier = Modifier.padding(bottom = 16.dp)) {
-                                    Row(
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(bottom = 6.dp)
-                                    ) {
-                                        Text(
-                                            text = "Downloading weights...",
-                                            fontSize = 12.sp,
-                                            color = if (isDark) Color.LightGray else Color.DarkGray
-                                        )
-                                        Text(
-                                            text = "${(lfmProgress * 100).toInt()}%",
-                                            fontSize = 12.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            color = if (isDark) AmberAccent else WarmWoodBrown
-                                        )
-                                    }
+                            Spacer(modifier = Modifier.height(10.dp))
+                        }
 
-                                    LinearProgressIndicator(
-                                        progress = { lfmProgress },
-                                        color = if (isDark) AmberAccent else WarmWoodBrown,
-                                        trackColor = if (isDark) Color(0xFF2A2A30) else Color.LightGray,
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .height(8.dp)
-                                            .clip(RoundedCornerShape(4.dp))
+                        // Download trigger / Progress area
+                        if (lfmStatus == LiquidOnDeviceSdk.ModelStatus.DOWNLOADING) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 12.dp)
+                            ) {
+                                Row(
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(bottom = 4.dp)
+                                ) {
+                                    Text(
+                                        text = "Downloading Model Layer...",
+                                        fontSize = 12.sp,
+                                        color = if (isDark) Color.LightGray else Color.DarkGray
                                     )
-
-                                    Spacer(modifier = Modifier.height(8.dp))
-
-                                    Row(
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        modifier = Modifier.fillMaxWidth()
-                                    ) {
-                                        Text(
-                                            text = "Speed: $lfmSpeed",
-                                            fontSize = 11.sp,
-                                            color = if (isDark) Color.Gray else Color.DarkGray
-                                        )
-                                        Text(
-                                            text = lfmEta,
-                                            fontSize = 11.sp,
-                                            color = if (isDark) Color.Gray else Color.DarkGray
-                                        )
-                                    }
+                                    Text(
+                                        text = "${(lfmProgress * 100).toInt()}%",
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = if (isDark) AmberAccent else WarmWoodBrown
+                                    )
                                 }
 
+                                LinearProgressIndicator(
+                                    progress = { lfmProgress },
+                                    color = if (isDark) AmberAccent else WarmWoodBrown,
+                                    trackColor = if (isDark) Color(0xFF2A2A30) else Color.LightGray,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(8.dp)
+                                        .clip(RoundedCornerShape(4.dp))
+                                )
+
+                                Spacer(modifier = Modifier.height(6.dp))
+
+                                Row(
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Text(
+                                        text = "Speed: $lfmSpeed",
+                                        fontSize = 11.sp,
+                                        color = if (isDark) Color.Gray else Color.DarkGray
+                                    )
+                                    Text(
+                                        text = lfmEta,
+                                        fontSize = 11.sp,
+                                        color = if (isDark) Color.Gray else Color.DarkGray
+                                    )
+                                }
+
+                                Spacer(modifier = Modifier.height(10.dp))
+
                                 OutlinedButton(
-                                    onClick = {
-                                        LiquidOnDeviceSdk().cancelDownload()
-                                    },
+                                    onClick = { LiquidOnDeviceSdk().cancelDownload() },
                                     border = androidx.compose.foundation.BorderStroke(1.dp, Color.Red),
                                     colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.Red),
                                     shape = RoundedCornerShape(8.dp),
@@ -444,250 +553,317 @@ fun SettingsScreen(
                                         modifier = Modifier.size(16.dp)
                                     )
                                     Spacer(modifier = Modifier.width(6.dp))
-                                    Text(text = "Cancel Download", fontSize = 12.sp)
+                                    Text(text = "Cancel Transfer", fontSize = 12.sp)
                                 }
                             }
-                            LiquidOnDeviceSdk.ModelStatus.DOWNLOADED -> {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    modifier = Modifier.padding(bottom = 16.dp)
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.Check,
-                                        contentDescription = "Downloaded",
-                                        tint = Color.Green,
-                                        modifier = Modifier.size(18.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Text(
-                                        text = "Model weights are downloaded.",
-                                        fontSize = 13.sp,
-                                        fontWeight = FontWeight.Medium,
-                                        color = if (isDark) Color.White else Color.Black
-                                    )
-                                }
-
-                                Row(
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                    modifier = Modifier.fillMaxWidth()
-                                ) {
-                                    Button(
-                                        onClick = {
-                                            scope.launch {
-                                                LiquidOnDeviceSdk().initialize(context)
+                        } else {
+                            Button(
+                                onClick = {
+                                    scope.launch {
+                                        val sdk = LiquidOnDeviceSdk()
+                                        if (useCustomUrl) {
+                                            if (customUrlInput.isNotEmpty()) {
+                                                val size = customSizeInput.toIntOrNull() ?: 175
+                                                sdk.startDownload(
+                                                    context = context,
+                                                    modelUrl = customUrlInput,
+                                                    customFileName = customFileNameInput,
+                                                    sizeMb = size
+                                                )
                                             }
-                                        },
-                                        colors = ButtonDefaults.buttonColors(
-                                            containerColor = if (isDark) AmberAccent else WarmWoodBrown,
-                                            contentColor = if (isDark) Color.Black else Color.White
-                                        ),
-                                        shape = RoundedCornerShape(8.dp),
-                                        modifier = Modifier
-                                            .weight(1.5f)
-                                            .height(44.dp)
-                                            .testTag("load_lfm_btn")
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.Default.Build,
-                                            contentDescription = "Load",
-                                            modifier = Modifier.size(16.dp)
-                                        )
-                                        Spacer(modifier = Modifier.width(6.dp))
-                                        Text(text = "Load Model to RAM", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                        } else {
+                                            val preset = LiquidOnDeviceSdk.PRESETS[selectedPresetIndex]
+                                            sdk.startDownload(
+                                                context = context,
+                                                modelUrl = preset.url,
+                                                customFileName = preset.fileName,
+                                                sizeMb = preset.sizeMb
+                                            )
+                                        }
                                     }
-
-                                    OutlinedButton(
-                                        onClick = {
-                                            LiquidOnDeviceSdk().deleteModel(context)
-                                        },
-                                        border = androidx.compose.foundation.BorderStroke(
-                                            width = 1.dp,
-                                            color = if (isDark) Color(0xFFEF5350) else Color(0xFFC62828)
-                                        ),
-                                        colors = ButtonDefaults.outlinedButtonColors(
-                                            contentColor = if (isDark) Color(0xFFEF5350) else Color(0xFFC62828)
-                                        ),
-                                        shape = RoundedCornerShape(8.dp),
-                                        modifier = Modifier
-                                            .weight(1f)
-                                            .height(44.dp)
-                                            .testTag("delete_lfm_btn")
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.Default.Delete,
-                                            contentDescription = "Delete",
-                                            modifier = Modifier.size(16.dp)
-                                        )
-                                        Spacer(modifier = Modifier.width(4.dp))
-                                        Text(text = "Delete", fontSize = 12.sp)
-                                    }
-                                }
+                                },
+                                enabled = !useCustomUrl || customUrlInput.isNotEmpty(),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = if (isDark) AmberAccent else WarmWoodBrown,
+                                    contentColor = if (isDark) Color.Black else Color.White
+                                ),
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(44.dp)
+                                    .padding(top = 10.dp)
+                                    .testTag("download_lfm_btn")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.PlayArrow,
+                                    contentDescription = "Download",
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = "Start Model Weights Download",
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
                             }
-                            LiquidOnDeviceSdk.ModelStatus.LOADING -> {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
+                        }
+
+                        HorizontalDivider(
+                            color = if (isDark) Color.DarkGray else Color.LightGray,
+                            modifier = Modifier.padding(vertical = 16.dp)
+                        )
+
+                        // SECTION 2: WEIGHTS STORED ON LOCAL DEVICE
+                        Text(
+                            text = "2. LOCAL WEIGHTS ON STORAGE DISK",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = if (isDark) AmberAccent else WarmWoodBrown,
+                            modifier = Modifier.padding(bottom = 10.dp)
+                        )
+
+                        if (downloadedFiles.isEmpty()) {
+                            Surface(
+                                color = if (isDark) Color(0xFF0F0F12) else Color(0xFFF9F9F9),
+                                border = androidx.compose.foundation.BorderStroke(1.dp, if (isDark) Color.DarkGray else Color.LightGray),
+                                shape = RoundedCornerShape(6.dp),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(bottom = 12.dp)
+                            ) {
+                                Text(
+                                    text = "No weights detected on disk. Select a model preset or custom URL above to download weights (weights will be saved directly to your device's Downloads folder).",
+                                    fontSize = 11.sp,
+                                    color = if (isDark) Color.Gray else Color.DarkGray,
+                                    modifier = Modifier.padding(12.dp),
+                                    lineHeight = 16.sp
+                                )
+                            }
+                        } else {
+                            downloadedFiles.forEach { file ->
+                                val isActive = file.name == activeModelFileName
+                                val isLoaded = lfmStatus == LiquidOnDeviceSdk.ModelStatus.LOADED && isActive
+                                val isThisLoading = lfmStatus == LiquidOnDeviceSdk.ModelStatus.LOADING && isActive
+
+                                Card(
+                                    colors = CardDefaults.cardColors(
+                                        containerColor = if (isActive) {
+                                            if (isDark) Color(0xFF1B2F20) else Color(0xFFE8F5E9)
+                                        } else {
+                                            if (isDark) Color(0xFF0D0D11) else Color(0xFFFAFAFA)
+                                        }
+                                    ),
+                                    border = androidx.compose.foundation.BorderStroke(
+                                        width = 1.dp,
+                                        color = if (isActive) Color.Green else (if (isDark) Color.DarkGray else Color.LightGray)
+                                    ),
+                                    shape = RoundedCornerShape(8.dp),
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .padding(vertical = 12.dp),
-                                    horizontalArrangement = Arrangement.Center
+                                        .padding(bottom = 8.dp)
                                 ) {
-                                    CircularProgressIndicator(
-                                        strokeWidth = 2.5.dp,
-                                        color = if (isDark) AmberAccent else WarmWoodBrown,
-                                        modifier = Modifier.size(20.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(12.dp))
-                                    Text(
-                                        text = "Loading weights into RAM allocation...",
-                                        fontSize = 13.sp,
-                                        fontFamily = FontFamily.Monospace,
-                                        color = if (isDark) Color.LightGray else Color.DarkGray
-                                    )
-                                }
-                            }
-                            LiquidOnDeviceSdk.ModelStatus.LOADED -> {
-                                Column {
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        modifier = Modifier.padding(bottom = 12.dp)
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.Default.CheckCircle,
-                                            contentDescription = "Active",
-                                            tint = Color.Green,
-                                            modifier = Modifier.size(20.dp)
-                                        )
-                                        Spacer(modifier = Modifier.width(6.dp))
-                                        Text(
-                                            text = "Active & Ready (Running entirely offline)",
-                                            fontSize = 13.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            color = Color.Green
-                                        )
-                                    }
+                                    Column(modifier = Modifier.padding(10.dp)) {
+                                        Row(
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            modifier = Modifier.fillMaxWidth()
+                                        ) {
+                                            Column(modifier = Modifier.weight(1f)) {
+                                                Text(
+                                                    text = file.name,
+                                                    fontSize = 12.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = if (isDark) Color.White else Color.Black
+                                                )
+                                                Text(
+                                                    text = "Path: ${file.absolutePath}",
+                                                    fontSize = 10.sp,
+                                                    fontFamily = FontFamily.Monospace,
+                                                    color = if (isDark) Color.Gray else Color.DarkGray,
+                                                    maxLines = 1,
+                                                    modifier = Modifier.padding(top = 2.dp)
+                                                )
+                                                Text(
+                                                    text = "Size: ${String.format("%.1f MB", file.length() / (1024f * 1024f).coerceAtLeast(1.0f))}",
+                                                    fontSize = 10.sp,
+                                                    color = if (isDark) Color.LightGray else Color.DarkGray,
+                                                    modifier = Modifier.padding(top = 2.dp)
+                                                )
+                                            }
 
-                                    OutlinedButton(
-                                        onClick = {
-                                            LiquidOnDeviceSdk().deleteModel(context)
-                                        },
-                                        border = androidx.compose.foundation.BorderStroke(
-                                            width = 1.dp,
-                                            color = if (isDark) Color(0xFFEF5350) else Color(0xFFC62828)
-                                        ),
-                                        colors = ButtonDefaults.outlinedButtonColors(
-                                            contentColor = if (isDark) Color(0xFFEF5350) else Color(0xFFC62828)
-                                        ),
-                                        shape = RoundedCornerShape(8.dp),
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .height(36.dp)
-                                            .padding(bottom = 12.dp)
-                                            .testTag("delete_lfm_btn_active")
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.Default.Delete,
-                                            contentDescription = "Unload/Delete",
-                                            modifier = Modifier.size(16.dp)
-                                        )
-                                        Spacer(modifier = Modifier.width(6.dp))
-                                        Text(text = "Unload & Delete Weights from Storage", fontSize = 11.sp)
-                                    }
+                                            IconButton(
+                                                onClick = {
+                                                    LiquidOnDeviceSdk().deleteModel(context, file.name)
+                                                }
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Default.Delete,
+                                                    contentDescription = "Delete Model Weights",
+                                                    tint = Color.Red,
+                                                    modifier = Modifier.size(18.dp)
+                                                )
+                                            }
+                                        }
 
-                                    HorizontalDivider(
-                                        color = if (isDark) Color.DarkGray else Color.LightGray,
-                                        modifier = Modifier.padding(vertical = 12.dp)
-                                    )
+                                        Spacer(modifier = Modifier.height(8.dp))
 
-                                    // Local Testing Area / Playground!
-                                    Text(
-                                        text = "Test Local Inference Playground:",
-                                        fontSize = 12.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = if (isDark) AmberAccent else WarmWoodBrown,
-                                        modifier = Modifier.padding(bottom = 6.dp)
-                                    )
-
-                                    OutlinedTextField(
-                                        value = localTestPrompt,
-                                        onValueChange = { localTestPrompt = it },
-                                        textStyle = MaterialTheme.typography.bodySmall,
-                                        colors = OutlinedTextFieldDefaults.colors(
-                                            focusedBorderColor = if (isDark) AmberAccent else WarmWoodBrown,
-                                            unfocusedBorderColor = if (isDark) Color.DarkGray else Color.Gray,
-                                            focusedTextColor = if (isDark) Color.White else Color.Black,
-                                            unfocusedTextColor = if (isDark) Color.White else Color.Black
-                                        ),
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(bottom = 12.dp)
-                                    )
-
-                                    Button(
-                                        onClick = {
-                                            isLocalTesting = true
-                                            localTestResponse = ""
-                                            scope.launch {
-                                                try {
-                                                    LiquidOnDeviceSdk().streamCompletion(context, localTestPrompt).collect { chunk ->
-                                                        localTestResponse += chunk
-                                                    }
-                                                } catch (e: Exception) {
-                                                    localTestResponse = "Error: ${e.localizedMessage}"
-                                                } finally {
-                                                    isLocalTesting = false
+                                        Row(
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            modifier = Modifier.fillMaxWidth()
+                                        ) {
+                                            if (isLoaded) {
+                                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                                    Icon(
+                                                        imageVector = Icons.Default.CheckCircle,
+                                                        contentDescription = "Active",
+                                                        tint = Color.Green,
+                                                        modifier = Modifier.size(16.dp)
+                                                    )
+                                                    Spacer(modifier = Modifier.width(4.dp))
+                                                    Text(
+                                                        text = "Active & Loaded in RAM",
+                                                        fontSize = 11.sp,
+                                                        fontWeight = FontWeight.Bold,
+                                                        color = Color.Green
+                                                    )
+                                                }
+                                            } else if (isThisLoading) {
+                                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                                    CircularProgressIndicator(
+                                                        strokeWidth = 2.dp,
+                                                        color = if (isDark) AmberAccent else WarmWoodBrown,
+                                                        modifier = Modifier.size(14.dp)
+                                                    )
+                                                    Spacer(modifier = Modifier.width(6.dp))
+                                                    Text(
+                                                        text = "Loading neural weights...",
+                                                        fontSize = 11.sp,
+                                                        color = if (isDark) Color.LightGray else Color.DarkGray
+                                                    )
+                                                }
+                                            } else {
+                                                Button(
+                                                    onClick = {
+                                                        scope.launch {
+                                                            LiquidOnDeviceSdk.setActiveModel(context, file.name)
+                                                            LiquidOnDeviceSdk().initialize(context, file.name)
+                                                        }
+                                                    },
+                                                    colors = ButtonDefaults.buttonColors(
+                                                        containerColor = if (isDark) Color(0xFF2A2A30) else Color.LightGray,
+                                                        contentColor = if (isDark) Color.White else Color.Black
+                                                    ),
+                                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                                                    shape = RoundedCornerShape(4.dp),
+                                                    modifier = Modifier
+                                                        .height(28.dp)
+                                                        .testTag("load_model_${file.name}")
+                                                ) {
+                                                    Text(text = "Load weights into system RAM", fontSize = 10.sp, fontWeight = FontWeight.Bold)
                                                 }
                                             }
-                                        },
-                                        enabled = !isLocalTesting && localTestPrompt.isNotEmpty(),
-                                        colors = ButtonDefaults.buttonColors(
-                                            containerColor = if (isDark) AmberAccent else WarmWoodBrown,
-                                            contentColor = if (isDark) Color.Black else Color.White
-                                        ),
-                                        shape = RoundedCornerShape(8.dp),
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .height(40.dp)
-                                    ) {
-                                        if (isLocalTesting) {
-                                            CircularProgressIndicator(
-                                                strokeWidth = 2.dp,
-                                                color = if (isDark) Color.Black else Color.White,
-                                                modifier = Modifier.size(16.dp)
-                                            )
-                                            Spacer(modifier = Modifier.width(8.dp))
-                                            Text(text = "Processing neural layers...", fontSize = 12.sp)
-                                        } else {
-                                            Icon(
-                                                imageVector = Icons.Default.Send,
-                                                contentDescription = "Send Test",
-                                                modifier = Modifier.size(16.dp)
-                                            )
-                                            Spacer(modifier = Modifier.width(6.dp))
-                                            Text(text = "Run On-Device Inference", fontSize = 12.sp)
                                         }
                                     }
+                                }
+                            }
+                        }
 
-                                    if (localTestResponse.isNotEmpty()) {
-                                        Surface(
-                                            color = if (isDark) Color(0xFF0C0C0E) else Color(0xFFF1F1F1),
-                                            shape = RoundedCornerShape(6.dp),
-                                            border = androidx.compose.foundation.BorderStroke(
-                                                width = 1.dp,
-                                                color = if (isDark) Color(0xFF1C1C22) else Color.LightGray
-                                            ),
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .padding(top = 12.dp)
-                                        ) {
-                                            Text(
-                                                text = localTestResponse,
-                                                fontSize = 11.sp,
-                                                fontFamily = FontFamily.Monospace,
-                                                color = if (isDark) Color.Green else Color.Black,
-                                                modifier = Modifier.padding(10.dp)
-                                            )
+                        // Playgrounds & Active state Info
+                        if (lfmStatus == LiquidOnDeviceSdk.ModelStatus.LOADED && activeModelFileName.isNotEmpty()) {
+                            HorizontalDivider(
+                                color = if (isDark) Color.DarkGray else Color.LightGray,
+                                modifier = Modifier.padding(vertical = 14.dp)
+                            )
+
+                            // Local Testing Area / Playground!
+                            Text(
+                                text = "Test Local Inference Playground ($activeModelFileName):",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = if (isDark) AmberAccent else WarmWoodBrown,
+                                modifier = Modifier.padding(bottom = 6.dp)
+                            )
+
+                            OutlinedTextField(
+                                value = localTestPrompt,
+                                onValueChange = { localTestPrompt = it },
+                                textStyle = MaterialTheme.typography.bodySmall,
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedBorderColor = if (isDark) AmberAccent else WarmWoodBrown,
+                                    unfocusedBorderColor = if (isDark) Color.DarkGray else Color.Gray,
+                                    focusedTextColor = if (isDark) Color.White else Color.Black,
+                                    unfocusedTextColor = if (isDark) Color.White else Color.Black
+                                ),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(bottom = 12.dp)
+                            )
+
+                            Button(
+                                onClick = {
+                                    isLocalTesting = true
+                                    localTestResponse = ""
+                                    scope.launch {
+                                        try {
+                                            LiquidOnDeviceSdk().streamCompletion(context, localTestPrompt).collect { chunk ->
+                                                localTestResponse += chunk
+                                            }
+                                        } catch (e: Exception) {
+                                            localTestResponse = "Error: ${e.localizedMessage}"
+                                        } finally {
+                                            isLocalTesting = false
                                         }
                                     }
+                                },
+                                enabled = !isLocalTesting && localTestPrompt.isNotEmpty(),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = if (isDark) AmberAccent else WarmWoodBrown,
+                                    contentColor = if (isDark) Color.Black else Color.White
+                                ),
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(40.dp)
+                            ) {
+                                if (isLocalTesting) {
+                                    CircularProgressIndicator(
+                                        strokeWidth = 2.dp,
+                                        color = if (isDark) Color.Black else Color.White,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(text = "Processing neural layers...", fontSize = 12.sp)
+                                } else {
+                                    Icon(
+                                        imageVector = Icons.Default.Send,
+                                        contentDescription = "Send Test",
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(text = "Run On-Device Inference", fontSize = 12.sp)
+                                }
+                            }
+
+                            if (localTestResponse.isNotEmpty()) {
+                                Surface(
+                                    color = if (isDark) Color(0xFF0C0C0E) else Color(0xFFF1F1F1),
+                                    shape = RoundedCornerShape(6.dp),
+                                    border = androidx.compose.foundation.BorderStroke(
+                                        width = 1.dp,
+                                        color = if (isDark) Color(0xFF1C1C22) else Color.LightGray
+                                    ),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(top = 12.dp)
+                                ) {
+                                    Text(
+                                        text = localTestResponse,
+                                        fontSize = 11.sp,
+                                        fontFamily = FontFamily.Monospace,
+                                        color = if (isDark) Color.Green else Color.Black,
+                                        modifier = Modifier.padding(10.dp)
+                                    )
                                 }
                             }
                         }
