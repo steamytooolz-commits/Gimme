@@ -62,6 +62,7 @@ fun SettingsScreen(
     val downloadedFiles by LiquidOnDeviceSdk.downloadedFiles.collectAsState()
     val activeModelFileName by LiquidOnDeviceSdk.activeModelFileName.collectAsState()
     val activeModelInfo by LiquidOnDeviceSdk.activeModelInfo.collectAsState()
+    val verificationStates by LiquidOnDeviceSdk.verificationStates.collectAsState()
 
     var selectedPresetIndex by remember { mutableIntStateOf(0) }
     var useCustomUrl by remember { mutableStateOf(false) }
@@ -69,10 +70,24 @@ fun SettingsScreen(
     var customFileNameInput by remember { mutableStateOf("") }
     var customSizeInput by remember { mutableStateOf("175") }
 
+    var hfRepoInput by remember { mutableStateOf("mradermacher/LFM2.5-1.2B-Instruct-GGUF") }
+    var hfGgufFiles by remember { mutableStateOf<List<LiquidOnDeviceSdk.ModelMetadata>>(emptyList()) }
+    var isSearchingHf by remember { mutableStateOf(false) }
+    var hfSearchError by remember { mutableStateOf("") }
+    var showHfDropdown by remember { mutableStateOf(false) }
+
     val scope = rememberCoroutineScope()
     var localTestPrompt by remember { mutableStateOf("Verify if suspect Jax has a valid alibi for central magistrate breach.") }
     var localTestResponse by remember { mutableStateOf("") }
     var isLocalTesting by remember { mutableStateOf(false) }
+
+    LaunchedEffect(downloadedFiles) {
+        downloadedFiles.forEach { file ->
+            if (!verificationStates.containsKey(file.name)) {
+                LiquidOnDeviceSdk.verifyFileIntegrity(context, file)
+            }
+        }
+    }
 
     LaunchedEffect(uiState.config.providerName) {
         if (uiState.config.providerName == "Liquid LFM On-Device SDK") {
@@ -412,6 +427,129 @@ fun SettingsScreen(
                                 }
                             }
                         } else {
+                            // HuggingFace Repo Search / Direct Sideload Selector
+                            Text(
+                                text = "HUGGING FACE MODEL HUB DIRECT LOOKUP",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = if (isDark) AmberAccent else WarmWoodBrown,
+                                modifier = Modifier.padding(bottom = 6.dp)
+                            )
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
+                            ) {
+                                OutlinedTextField(
+                                    value = hfRepoInput,
+                                    onValueChange = { hfRepoInput = it },
+                                    singleLine = true,
+                                    label = { Text("HF Repo ID (e.g. liquidai/LFM2.5-230M-Instruct)", fontSize = 10.sp) },
+                                    textStyle = MaterialTheme.typography.bodySmall,
+                                    colors = OutlinedTextFieldDefaults.colors(
+                                        focusedBorderColor = if (isDark) AmberAccent else WarmWoodBrown,
+                                        unfocusedBorderColor = if (isDark) Color.DarkGray else Color.Gray,
+                                        focusedTextColor = if (isDark) Color.White else Color.Black,
+                                        unfocusedTextColor = if (isDark) Color.White else Color.Black
+                                    ),
+                                    modifier = Modifier.weight(1f)
+                                )
+                                Button(
+                                    onClick = {
+                                        isSearchingHf = true
+                                        hfSearchError = ""
+                                        scope.launch {
+                                            try {
+                                                val files = LiquidOnDeviceSdk.fetchRepoGgufFiles(hfRepoInput.trim())
+                                                if (files.isNotEmpty()) {
+                                                    hfGgufFiles = files
+                                                    showHfDropdown = true
+                                                } else {
+                                                    hfSearchError = "No GGUF models found in this repo."
+                                                }
+                                            } catch (e: Exception) {
+                                                hfSearchError = "Error: ${e.localizedMessage}"
+                                            } finally {
+                                                isSearchingHf = false
+                                            }
+                                        }
+                                    },
+                                    enabled = !isSearchingHf && hfRepoInput.isNotEmpty(),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = if (isDark) AmberAccent else WarmWoodBrown,
+                                        contentColor = if (isDark) Color.Black else Color.White
+                                    ),
+                                    shape = RoundedCornerShape(8.dp),
+                                    modifier = Modifier.height(48.dp)
+                                ) {
+                                    if (isSearchingHf) {
+                                        CircularProgressIndicator(
+                                            strokeWidth = 2.dp,
+                                            color = if (isDark) Color.Black else Color.White,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                    } else {
+                                        Text("Search Hub", fontSize = 11.sp)
+                                    }
+                                }
+                            }
+
+                            if (hfSearchError.isNotEmpty()) {
+                                Text(
+                                    text = hfSearchError,
+                                    color = Color.Red,
+                                    fontSize = 11.sp,
+                                    modifier = Modifier.padding(bottom = 10.dp)
+                                )
+                            }
+
+                            if (showHfDropdown && hfGgufFiles.isNotEmpty()) {
+                                Card(
+                                    colors = CardDefaults.cardColors(
+                                        containerColor = if (isDark) Color(0xFF141419) else Color(0xFFF0F0F5)
+                                    ),
+                                    shape = RoundedCornerShape(8.dp),
+                                    modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)
+                                ) {
+                                    Column(modifier = Modifier.padding(10.dp)) {
+                                        Text(
+                                            text = "Select GGUF file from HuggingFace:",
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = if (isDark) Color.White else Color.Black,
+                                            modifier = Modifier.padding(bottom = 6.dp)
+                                        )
+                                        hfGgufFiles.forEach { fileInfo ->
+                                            Row(
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .clickable {
+                                                        customUrlInput = fileInfo.downloadUrl
+                                                        customFileNameInput = fileInfo.fileName
+                                                        customSizeInput = (fileInfo.sizeBytes / (1024 * 1024)).toString()
+                                                        showHfDropdown = false
+                                                    }
+                                                    .padding(vertical = 6.dp)
+                                            ) {
+                                                Column(modifier = Modifier.weight(1f)) {
+                                                    Text(fileInfo.fileName, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = if (isDark) Color.White else Color.Black)
+                                                    Text("SHA-256: " + if (fileInfo.sha256.isNotEmpty()) fileInfo.sha256.take(16) + "..." else "N/A", fontSize = 9.sp, color = Color.Gray)
+                                                }
+                                                Spacer(modifier = Modifier.width(8.dp))
+                                                Text(
+                                                    text = String.format("%.1f MB", fileInfo.sizeBytes / (1024f * 1024f)),
+                                                    fontSize = 10.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = if (isDark) AmberAccent else WarmWoodBrown
+                                                )
+                                            }
+                                            HorizontalDivider(color = if (isDark) Color.DarkGray else Color.LightGray)
+                                        }
+                                    }
+                                }
+                            }
+
                             // Custom input fields
                             Text(
                                 text = "Enter Custom Download URL:",
@@ -689,6 +827,101 @@ fun SettingsScreen(
                                                     color = if (isDark) Color.LightGray else Color.DarkGray,
                                                     modifier = Modifier.padding(top = 2.dp)
                                                 )
+
+                                                val vState = verificationStates[file.name]
+                                                if (vState != null) {
+                                                    Column(modifier = Modifier.padding(top = 4.dp)) {
+                                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                                            Text(
+                                                                text = "HF Status: ",
+                                                                fontSize = 10.sp,
+                                                                color = if (isDark) Color.Gray else Color.DarkGray
+                                                            )
+                                                            Text(
+                                                                text = vState.status,
+                                                                fontSize = 10.sp,
+                                                                fontWeight = FontWeight.Bold,
+                                                                color = when {
+                                                                    vState.status.contains("Verified ✅") -> Color.Green
+                                                                    vState.status.contains("Verified ⚠️") -> if (isDark) AmberAccent else WarmWoodBrown
+                                                                    vState.status.contains("Corrupt ❌") -> Color.Red
+                                                                    vState.status.contains("Verifying") || vState.status.contains("Computing") -> if (isDark) AmberAccent else WarmWoodBrown
+                                                                    else -> Color.Gray
+                                                                }
+                                                            )
+                                                        }
+                                                        if (vState.progress in 0.01f..0.99f) {
+                                                            LinearProgressIndicator(
+                                                                progress = { vState.progress },
+                                                                color = if (isDark) AmberAccent else WarmWoodBrown,
+                                                                trackColor = Color.DarkGray,
+                                                                modifier = Modifier.fillMaxWidth().height(4.dp).padding(top = 2.dp)
+                                                            )
+                                                        }
+                                                        if (vState.details.isNotEmpty()) {
+                                                            Text(
+                                                                text = vState.details,
+                                                                fontSize = 9.sp,
+                                                                color = if (isDark) Color.LightGray else Color.DarkGray,
+                                                                modifier = Modifier.padding(top = 2.dp),
+                                                                lineHeight = 12.sp
+                                                            )
+                                                        }
+                                                        if (vState.status.contains("Unverified ℹ️")) {
+                                                            var manualVerifyRepoId by remember { mutableStateOf("") }
+                                                            Row(
+                                                                verticalAlignment = Alignment.CenterVertically,
+                                                                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                                                modifier = Modifier.padding(top = 4.dp).fillMaxWidth()
+                                                            ) {
+                                                                OutlinedTextField(
+                                                                    value = manualVerifyRepoId,
+                                                                    onValueChange = { manualVerifyRepoId = it },
+                                                                    singleLine = true,
+                                                                    placeholder = { Text("repo/name (e.g. liquidai/LFM2.5-230M-Instruct)", fontSize = 8.sp) },
+                                                                    textStyle = androidx.compose.ui.text.TextStyle(fontSize = 9.sp),
+                                                                    colors = OutlinedTextFieldDefaults.colors(
+                                                                        focusedBorderColor = if (isDark) AmberAccent else WarmWoodBrown,
+                                                                        unfocusedBorderColor = if (isDark) Color.DarkGray else Color.Gray,
+                                                                        focusedTextColor = if (isDark) Color.White else Color.Black,
+                                                                        unfocusedTextColor = if (isDark) Color.White else Color.Black
+                                                                    ),
+                                                                    modifier = Modifier.weight(1f).height(32.dp)
+                                                                )
+                                                                Button(
+                                                                    onClick = {
+                                                                        if (manualVerifyRepoId.isNotEmpty()) {
+                                                                            LiquidOnDeviceSdk.verifyFileIntegrity(context, file, manualVerifyRepoId.trim())
+                                                                        }
+                                                                    },
+                                                                    colors = ButtonDefaults.buttonColors(
+                                                                        containerColor = if (isDark) AmberAccent else WarmWoodBrown,
+                                                                        contentColor = if (isDark) Color.Black else Color.White
+                                                                    ),
+                                                                    shape = RoundedCornerShape(4.dp),
+                                                                    contentPadding = PaddingValues(horizontal = 6.dp),
+                                                                    modifier = Modifier.height(32.dp)
+                                                                ) {
+                                                                    Text("Verify", fontSize = 8.sp)
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                } else {
+                                                    Button(
+                                                        onClick = {
+                                                            LiquidOnDeviceSdk.verifyFileIntegrity(context, file)
+                                                        },
+                                                        colors = ButtonDefaults.buttonColors(
+                                                            containerColor = Color.Transparent,
+                                                            contentColor = if (isDark) AmberAccent else WarmWoodBrown
+                                                        ),
+                                                        contentPadding = PaddingValues(0.dp),
+                                                        modifier = Modifier.height(24.dp)
+                                                    ) {
+                                                        Text("Verify with HuggingFace Hub", fontSize = 9.sp, textDecoration = androidx.compose.ui.text.style.TextDecoration.Underline)
+                                                    }
+                                                }
                                             }
 
                                             IconButton(

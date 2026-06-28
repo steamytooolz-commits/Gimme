@@ -3,18 +3,18 @@ package com.example.api
 import android.content.Context
 import android.os.Environment
 import android.util.Log
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.flow
-import kotlinx.coroutines.flow.flowOn
-import kotlinx.coroutines.withContext
+import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.*
 import java.io.File
 import java.io.FileOutputStream
 import java.io.OutputStream
+import java.io.IOException
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
+import com.squareup.moshi.Moshi
+import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
 
 /**
  * High-Fidelity integration & simulation wrapper for Liquid AI's On-Device Kotlin Multiplatform SDK.
@@ -40,6 +40,21 @@ class LiquidOnDeviceSdk {
         val sizeMb: Int,
         val fileName: String,
         val description: String
+    )
+
+    data class ModelMetadata(
+        val repoId: String,
+        val fileName: String,
+        val sizeBytes: Long,
+        val sha256: String,
+        val downloadUrl: String
+    )
+
+    data class FileVerificationState(
+        val fileName: String,
+        val status: String, // "Verifying...", "HF Verified ✅", "Size Verified ⚠️", "Corrupt ❌", "Unverified ℹ️"
+        val progress: Float = 0f,
+        val details: String = ""
     )
 
     companion object {
@@ -180,6 +195,231 @@ class LiquidOnDeviceSdk {
             }
         }
 
+        private val _verificationStates = MutableStateFlow<Map<String, FileVerificationState>>(emptyMap())
+        val verificationStates: StateFlow<Map<String, FileVerificationState>> = _verificationStates.asStateFlow()
+
+        fun parseHuggingFaceUrl(url: String): Pair<String, String>? {
+            val prefix = "https://huggingface.co/"
+            if (!url.startsWith(prefix)) return null
+            val withoutPrefix = url.substring(prefix.length)
+            val resolveIndex = withoutPrefix.indexOf("/resolve/")
+            if (resolveIndex == -1) return null
+            val repoId = withoutPrefix.substring(0, resolveIndex)
+            val remaining = withoutPrefix.substring(resolveIndex + "/resolve/".length)
+            val branchIndex = remaining.indexOf("/")
+            if (branchIndex == -1) return null
+            val filename = remaining.substring(branchIndex + 1)
+            return Pair(repoId, filename)
+        }
+
+        suspend fun fetchRepoGgufFiles(repoId: String): List<ModelMetadata> = withContext(Dispatchers.IO) {
+            try {
+                val client = okhttp3.OkHttpClient()
+                val request = okhttp3.Request.Builder()
+                    .url("https://huggingface.co/api/models/$repoId")
+                    .build()
+                
+                client.newCall(request).execute().use { response ->
+                    if (!response.isSuccessful) return@withContext emptyList()
+                    val body = response.body?.string() ?: return@withContext emptyList()
+                    
+                    val moshi = Moshi.Builder().add(KotlinJsonAdapterFactory()).build()
+                    val responseMap = moshi.adapter(Map::class.java).fromJson(body)
+                    val siblings = responseMap?.get("siblings") as? List<*> ?: return@withContext emptyList()
+                    
+                    val result = mutableListOf<ModelMetadata>()
+                    for (sibling in siblings) {
+                        val sMap = sibling as? Map<*, *> ?: continue
+                        val rfilename = sMap["rfilename"] as? String ?: continue
+                        if (rfilename.endsWith(".gguf")) {
+                            val lfsMap = sMap["lfs"] as? Map<*, *>
+                            val sha256 = (lfsMap?.get("oid") as? String) ?: (sMap["sha256"] as? String) ?: ""
+                            val size = ((sMap["size"] as? Number)?.toLong()) ?: ((lfsMap?.get("size") as? Number)?.toLong()) ?: 0L
+                            val downloadUrl = "https://huggingface.co/$repoId/resolve/main/$rfilename"
+                            result.add(ModelMetadata(repoId, rfilename, size, sha256, downloadUrl))
+                        }
+                    }
+                    result
+                }
+            } catch (e: Exception) {
+                Log.e("LiquidOnDeviceSdk", "Failed to fetch files for repo: $repoId", e)
+                emptyList()
+            }
+        }
+
+        fun writeMetadataFile(context: Context, fileName: String, repoId: String, sizeBytes: Long, sha256: String, downloadUrl: String) {
+            try {
+                val modelDir = getModelDirectory(context)
+                val metaFile = File(modelDir, "$fileName.meta")
+                val moshi = Moshi.Builder().add(KotlinJsonAdapterFactory()).build()
+                val metaMap = mapOf(
+                    "repoId" to repoId,
+                    "fileName" to fileName,
+                    "sizeBytes" to sizeBytes.toString(),
+                    "sha256" to sha256,
+                    "downloadUrl" to downloadUrl
+                )
+                val json = moshi.adapter(Map::class.java).toJson(metaMap)
+                metaFile.writeText(json)
+                Log.d("LiquidOnDeviceSdk", "Wrote metadata file: ${metaFile.absolutePath}")
+            } catch (e: Exception) {
+                Log.e("LiquidOnDeviceSdk", "Failed to write metadata file", e)
+            }
+        }
+
+        fun verifyFileIntegrity(context: Context, file: File, repoIdInput: String? = null) {
+            val coroutineScope = kotlinx.coroutines.CoroutineScope(Dispatchers.Default)
+            coroutineScope.launch {
+                val fileName = file.name
+                _verificationStates.value = _verificationStates.value + (fileName to FileVerificationState(fileName, "Verifying...", 0f, "Checking file and contacting Hugging Face..."))
+                
+                val modelDir = getModelDirectory(context)
+                val metaFile = File(modelDir, "$fileName.meta")
+                var repoId = repoIdInput
+                var expectedSize = 0L
+                var expectedSha256 = ""
+                var downloadUrl = ""
+                
+                if (metaFile.exists()) {
+                    try {
+                        val json = metaFile.readText()
+                        val moshi = Moshi.Builder().add(KotlinJsonAdapterFactory()).build()
+                        val map = moshi.adapter(Map::class.java).fromJson(json)
+                        if (repoId == null) {
+                            repoId = map?.get("repoId") as? String
+                        }
+                        expectedSize = (map?.get("sizeBytes") as? String)?.toLongOrNull() ?: ((map?.get("sizeBytes") as? Number)?.toLong() ?: 0L)
+                        expectedSha256 = map?.get("sha256") as? String ?: ""
+                        downloadUrl = map?.get("downloadUrl") as? String ?: ""
+                    } catch (e: Exception) {
+                        Log.e("LiquidOnDeviceSdk", "Failed to read meta file for $fileName", e)
+                    }
+                }
+                
+                if (repoId == null) {
+                    val preset = PRESETS.find { it.fileName == fileName }
+                    if (preset != null) {
+                        val parsed = parseHuggingFaceUrl(preset.url)
+                        if (parsed != null) {
+                            repoId = parsed.first
+                        }
+                    }
+                }
+                
+                val ggufHeader = GgufParser.parseHeader(file)
+                val localGgufInfo = if (ggufHeader.isValid) {
+                    "\n• Architecture: ${ggufHeader.architecture.uppercase()}\n• Model Name: ${ggufHeader.modelName}\n• Tensors: ${ggufHeader.tensorCount}\n• Context Length: ${ggufHeader.contextLength}"
+                } else {
+                    ""
+                }
+
+                if (repoId == null) {
+                    val sizeMb = file.length() / (1024f * 1024f)
+                    _verificationStates.value = _verificationStates.value + (fileName to FileVerificationState(
+                        fileName = fileName,
+                        status = "Unverified ℹ️",
+                        progress = 1f,
+                        details = "Sideloaded file. File size on disk is ${String.format("%.1f MB", sizeMb)}.$localGgufInfo\n\nAdd HuggingFace Repo ID to verify SHA-256."
+                    ))
+                    return@launch
+                }
+                
+                _verificationStates.value = _verificationStates.value + (fileName to FileVerificationState(fileName, "Verifying...", 0.2f, "Fetching metadata from repo: $repoId..."))
+                
+                val hfFiles = fetchRepoGgufFiles(repoId)
+                val hfMatch = hfFiles.find { it.fileName == fileName }
+                
+                if (hfMatch == null) {
+                    _verificationStates.value = _verificationStates.value + (fileName to FileVerificationState(
+                        fileName = fileName,
+                        status = "Corrupt ❌",
+                        progress = 1f,
+                        details = "Could not find file '$fileName' in HuggingFace repo '$repoId'. Check repository ID or filename."
+                    ))
+                    return@launch
+                }
+                
+                expectedSize = hfMatch.sizeBytes
+                expectedSha256 = hfMatch.sha256
+                downloadUrl = hfMatch.downloadUrl
+                
+                if (!metaFile.exists() || expectedSha256.isNotEmpty()) {
+                    writeMetadataFile(context, fileName, repoId, expectedSize, expectedSha256, downloadUrl)
+                }
+                
+                val actualSize = file.length()
+                if (expectedSize > 0 && actualSize != expectedSize) {
+                    _verificationStates.value = _verificationStates.value + (fileName to FileVerificationState(
+                        fileName = fileName,
+                        status = "Corrupt ❌",
+                        progress = 1f,
+                        details = "Size mismatch! Expected ${expectedSize / (1024*1024)}MB but actual is ${actualSize / (1024*1024)}MB. Please redownload."
+                    ))
+                    return@launch
+                }
+                
+                if (expectedSha256.isEmpty()) {
+                    _verificationStates.value = _verificationStates.value + (fileName to FileVerificationState(
+                        fileName = fileName,
+                        status = "Size Verified ⚠️",
+                        progress = 1f,
+                        details = "File size matched Hugging Face metadata exactly (${String.format("%.1f MB", actualSize / (1024f * 1024f))}). SHA-256 not available on HF."
+                    ))
+                    return@launch
+                }
+                
+                _verificationStates.value = _verificationStates.value + (fileName to FileVerificationState(fileName, "Computing Hash...", 0.5f, "Hashing local blocks..."))
+                
+                try {
+                    val digest = java.security.MessageDigest.getInstance("SHA-256")
+                    val totalLength = file.length()
+                    var hashedBytes = 0L
+                    
+                    file.inputStream().use { input ->
+                        val buffer = ByteArray(1024 * 1024)
+                        var bytesRead = input.read(buffer)
+                        while (bytesRead != -1) {
+                            digest.update(buffer, 0, bytesRead)
+                            hashedBytes += bytesRead
+                            val progress = 0.5f + (hashedBytes.toFloat() / totalLength) * 0.4f
+                            _verificationStates.value = _verificationStates.value + (fileName to FileVerificationState(
+                                fileName = fileName,
+                                status = "Computing Hash...",
+                                progress = progress,
+                                details = "Hashing local blocks... ${hashedBytes / (1024*1024)}MB / ${totalLength / (1024*1024)}MB"
+                            ))
+                            bytesRead = input.read(buffer)
+                        }
+                    }
+                    
+                    val actualSha256 = digest.digest().joinToString("") { "%02x".format(it) }
+                    
+                    if (actualSha256.equals(expectedSha256, ignoreCase = true)) {
+                        _verificationStates.value = _verificationStates.value + (fileName to FileVerificationState(
+                            fileName = fileName,
+                            status = "HF Verified ✅",
+                            progress = 1f,
+                            details = "Integrity check passed! Size and SHA-256 match Hugging Face records exactly.$localGgufInfo"
+                        ))
+                    } else {
+                        _verificationStates.value = _verificationStates.value + (fileName to FileVerificationState(
+                            fileName = fileName,
+                            status = "Corrupt ❌",
+                            progress = 1f,
+                            details = "SHA-256 Mismatch! Download may be corrupted or modified.\nExpected: $expectedSha256\nActual: $actualSha256"
+                        ))
+                    }
+                } catch (e: Exception) {
+                    _verificationStates.value = _verificationStates.value + (fileName to FileVerificationState(
+                        fileName = fileName,
+                        status = "Size Verified ⚠️",
+                        progress = 1f,
+                        details = "Size matches Hugging Face. Hashing error: ${e.localizedMessage}"
+                    ))
+                }
+            }
+        }
+
         fun setActiveModel(context: Context, fileName: String) {
             _activeModelFileName.value = fileName
             isInitialized = false
@@ -202,17 +442,25 @@ class LiquidOnDeviceSdk {
 
         _status.value = ModelStatus.LOADING
         Log.d(tag, "Allocating tensor arenas and compiling kernels for $activeName in system RAM...")
-        _activeModelInfo.value = "Loading $activeName into RAM..."
+        _activeModelInfo.value = "Compiling Liquid Edge Pipeline for $activeName..."
         
-        // Simulate local neural network compile time
-        delay(1500)
+        // Initialize the high-performance memory-mapped pipeline
+        val pipelineResult = LiquidEdgeService.getInstance().initializePipeline(context, activeName)
         
-        _status.value = ModelStatus.LOADED
-        isInitialized = true
-        _activeModelFileName.value = activeName
-        _activeModelInfo.value = "Active: $activeName (Loaded in RAM)"
-        Log.d(tag, "Liquid LFM Local weights $activeName loaded successfully. Zero-latency inference active.")
-        true
+        if (pipelineResult.isSuccess) {
+            val state = pipelineResult.getOrNull()!!
+            _status.value = ModelStatus.LOADED
+            isInitialized = true
+            _activeModelFileName.value = activeName
+            _activeModelInfo.value = "Active: $activeName (Loaded)\n• Arch: ${state.architecture.uppercase()}\n• Model: ${state.modelName}\n• Tensors: ${state.tensorCount}\n• Context: ${state.contextLength} tokens\n• Memory Address: Memory Mapped"
+            Log.d(tag, "Liquid LFM Local weights $activeName mapped successfully via LiquidEdgeService. Zero-latency inference active.")
+            true
+        } else {
+            _status.value = ModelStatus.DOWNLOADED
+            isInitialized = false
+            _activeModelInfo.value = "Failed to load $activeName: ${pipelineResult.exceptionOrNull()?.localizedMessage}"
+            false
+        }
     }
 
     suspend fun startDownload(
@@ -229,7 +477,7 @@ class LiquidOnDeviceSdk {
         _status.value = ModelStatus.DOWNLOADING
         _downloadProgress.value = 0f
         _downloadSpeed.value = "0.0 MB/s"
-        _downloadEta.value = "Establishing contact with Liquid neural distribution node..."
+        _downloadEta.value = "Establishing contact with model server..."
 
         val fileName = if (customFileName.isNotEmpty()) {
             customFileName
@@ -239,8 +487,25 @@ class LiquidOnDeviceSdk {
             if (rawName.contains("?")) rawName.substringBefore("?") else rawName
         }.ifEmpty { "liquid_model.gguf" }
 
-        val totalBytes = sizeMb * 1024 * 1024L
-        var bytesDownloaded = 0L
+        // Pre-fetch HuggingFace details
+        val parsed = parseHuggingFaceUrl(modelUrl)
+        var repoId = ""
+        var hfSha256 = ""
+        var hfSize = 0L
+        if (parsed != null) {
+            repoId = parsed.first
+            try {
+                val hfFiles = fetchRepoGgufFiles(repoId)
+                val match = hfFiles.find { it.fileName == fileName }
+                if (match != null) {
+                    hfSha256 = match.sha256
+                    hfSize = match.sizeBytes
+                    Log.d("LiquidOnDeviceSdk", "Pre-fetched HF Metadata: Repo: $repoId, Size: $hfSize, SHA-256: $hfSha256")
+                }
+            } catch (e: Exception) {
+                Log.e("LiquidOnDeviceSdk", "Failed to pre-fetch HuggingFace details", e)
+            }
+        }
 
         // Primary: Public Downloads Directory
         val publicDownloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
@@ -267,58 +532,87 @@ class LiquidOnDeviceSdk {
             }
         }
 
-        try {
-            val downloadSpeedRange = 8.5f..15.2f // Simulated 5G high-speed download in MB/s
-            var currentSpeed = 10.0f
+        val client = okhttp3.OkHttpClient()
+        val request = okhttp3.Request.Builder().url(modelUrl).build()
 
-            while (bytesDownloaded < totalBytes) {
+        try {
+            val response = client.newCall(request).execute()
+            if (!response.isSuccessful) {
+                throw IOException("Unexpected code $response")
+            }
+
+            val body = response.body
+            if (body == null) {
+                throw IOException("Empty response body")
+            }
+
+            val totalBytes = if (hfSize > 0) hfSize else body.contentLength()
+            val input = body.byteStream()
+            
+            var bytesDownloaded = 0L
+            val buffer = ByteArray(8192)
+            var bytes = input.read(buffer)
+            var lastUpdate = System.currentTimeMillis()
+            var lastBytesDownloaded = 0L
+            
+            while (bytes >= 0) {
                 if (_status.value != ModelStatus.DOWNLOADING) {
-                    // Cancelled
                     out.close()
+                    input.close()
                     file.delete()
                     _status.value = ModelStatus.NOT_DOWNLOADED
                     checkStatus(context)
                     return@withContext
                 }
 
-                delay(200) // update interval
+                out.write(buffer, 0, bytes)
+                bytesDownloaded += bytes
 
-                // Fluctuate speed elegantly
-                val randSpeed = downloadSpeedRange.start + (kotlin.random.Random.nextFloat() * (downloadSpeedRange.endInclusive - downloadSpeedRange.start))
-                currentSpeed = currentSpeed * 0.92f + randSpeed * 0.08f
-                val increment = (currentSpeed * 1024 * 1024 * 0.2f).toLong() // 0.2 seconds of transfer
-                bytesDownloaded += increment
-                if (bytesDownloaded > totalBytes) {
-                    bytesDownloaded = totalBytes
+                val now = System.currentTimeMillis()
+                if (now - lastUpdate > 500) {
+                    val timeDiff = (now - lastUpdate) / 1000f
+                    val bytesDiff = bytesDownloaded - lastBytesDownloaded
+                    val speed = (bytesDiff / timeDiff) / (1024 * 1024f) // MB/s
+                    
+                    if (totalBytes > 0) {
+                        _downloadProgress.value = bytesDownloaded.toFloat() / totalBytes
+                        val remainingMb = (totalBytes - bytesDownloaded) / (1024 * 1024f)
+                        val etaSec = if (speed > 0) (remainingMb / speed).toInt() else 0
+                        _downloadEta.value = if (etaSec > 0) "$etaSec seconds remaining" else "Finishing..."
+                    } else {
+                        // Fallback if total length is unknown
+                        _downloadProgress.value = 0.5f // Indeterminate
+                        _downloadEta.value = "Downloading... (${bytesDownloaded / (1024 * 1024)} MB)"
+                    }
+                    _downloadSpeed.value = String.format("%.1f MB/s", speed)
+                    
+                    lastUpdate = now
+                    lastBytesDownloaded = bytesDownloaded
                 }
-
-                // Write metadata header to disk
-                if (bytesDownloaded < 512 * 1024) {
-                    out.write("LIQUID-NEURAL-LFM-MODEL-QUANTIZED-GGUF-FILE-HEADER-OK\n".toByteArray())
-                    out.write("URL: $modelUrl\n".toByteArray())
-                    out.write("Size: $sizeMb MB\n".toByteArray())
-                }
-
-                val progress = bytesDownloaded.toFloat() / totalBytes
-                _downloadProgress.value = progress
-                _downloadSpeed.value = String.format("%.1f MB/s", currentSpeed)
                 
-                val remainingMb = (totalBytes - bytesDownloaded) / (1024 * 1024f)
-                val etaSec = if (currentSpeed > 0) (remainingMb / currentSpeed).toInt() else 0
-                _downloadEta.value = if (etaSec > 0) "$etaSec seconds remaining" else "Wrapping up neural integrity check..."
+                bytes = input.read(buffer)
             }
 
-            out.write("\nLIQUID-MODEL-FOOTER-END-OF-FILE-INTEGRITY-VERIFIED-SHA256".toByteArray())
             out.flush()
             out.close()
+            input.close()
             
             Log.d(tag, "Download complete. Model weights written to ${file.absolutePath}")
+            
+            if (repoId.isNotEmpty()) {
+                writeMetadataFile(context, fileName, repoId, if (hfSize > 0) hfSize else bytesDownloaded, hfSha256, modelUrl)
+            }
+
             _activeModelFileName.value = fileName
             _status.value = ModelStatus.DOWNLOADED
             checkStatus(context)
+            
+            // Trigger background SHA-256 verification immediately
+            verifyFileIntegrity(context, file)
+            
             onComplete()
         } catch (e: Exception) {
-            Log.e(tag, "Failure during download loop writing", e)
+            Log.e(tag, "Failure during real download", e)
             try { out?.close() } catch (ex: Exception) {}
             file.delete()
             _status.value = ModelStatus.NOT_DOWNLOADED
@@ -370,14 +664,13 @@ class LiquidOnDeviceSdk {
             initialize(context, activeName)
         }
         
-        Log.d(tag, "Generating on-device completion using local active model: $activeName...")
-        delay(1000)
-
-        if (prompt.contains("json", ignoreCase = true) || prompt.contains("Format: JSON", ignoreCase = true)) {
-            getProceduralJsonResponseForPrompt(prompt)
-        } else {
-            "**[On-Device Liquid LFM ($activeName)]**\n\nLocal statutory analysis of the current criminal docket indicates that the security signature logs are corrupted, indicating unauthorized root-access. Suggesting deep trace evaluation."
+        Log.d(tag, "Generating on-device completion using local active model via LiquidEdgeService: $activeName...")
+        
+        val builder = StringBuilder()
+        LiquidEdgeService.getInstance().streamPipelineInference(prompt).collect { chunk ->
+            builder.append(chunk)
         }
+        builder.toString()
     }
 
     fun streamCompletion(context: Context?, prompt: String): Flow<String> = flow {
@@ -388,17 +681,46 @@ class LiquidOnDeviceSdk {
         if (!isInitialized) {
             initialize(context, activeName)
         }
-        val response = if (prompt.contains("json", ignoreCase = true)) {
-            getProceduralJsonResponseForPrompt(prompt)
-        } else {
-            "Based on the local on-device neural processing via active model ($activeName), we have detected structural anomalies in the transaction timestamp sequences."
-        }
-        val tokens = response.split(" ")
-        for (token in tokens) {
-            emit("$token ")
-            delay(50) // ~20 tokens/sec local chip inference speed
+        
+        LiquidEdgeService.getInstance().streamPipelineInference(prompt).collect { chunk ->
+            emit(chunk)
         }
     }.flowOn(Dispatchers.Default)
+
+    private fun fetchHuggingFaceResponse(prompt: String, maxTokens: Int, temperature: Float): String {
+        try {
+            val moshi = Moshi.Builder().add(KotlinJsonAdapterFactory()).build()
+            val requestMap = mapOf(
+                "inputs" to prompt,
+                "parameters" to mapOf(
+                    "max_new_tokens" to maxTokens,
+                    "temperature" to temperature,
+                    "return_full_text" to false
+                )
+            )
+            
+            val hfUrl = "https://api-inference.huggingface.co/models/HuggingFaceH4/zephyr-7b-beta"
+            val hfRequest = Request.Builder()
+                .url(hfUrl)
+                .post(moshi.adapter(Map::class.java).toJson(requestMap).toRequestBody("application/json".toMediaTypeOrNull()))
+                .build()
+            
+            val response = OkHttpClient().newCall(hfRequest).execute()
+            val responseBody = response.body?.string() ?: ""
+            
+            if (response.isSuccessful) {
+                val jsonArray = moshi.adapter(List::class.java).fromJson(responseBody)
+                val firstObj = jsonArray?.firstOrNull() as? Map<*, *>
+                return firstObj?.get("generated_text") as? String ?: "No text generated."
+            } else {
+                Log.e(tag, "HF Error: ${response.code} $responseBody")
+                return "Model processing error (${response.code})."
+            }
+        } catch (e: Exception) {
+            Log.e(tag, "Failed HF request", e)
+            return "Internal runtime exception during neural processing."
+        }
+    }
 
     private fun getProceduralJsonResponseForPrompt(prompt: String): String {
         val activeModel = _activeModelFileName.value.ifEmpty { "liquid_lfm_2.5_350m_q4.gguf" }
