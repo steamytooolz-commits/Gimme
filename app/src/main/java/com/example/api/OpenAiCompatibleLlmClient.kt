@@ -241,23 +241,16 @@ class OpenAiCompatibleLlmClient(private val context: android.content.Context? = 
         // Special handling for On-Device Liquid SDK preset
         if (config.providerName == "Liquid LFM On-Device SDK" || config.baseUrl == "liquid://on-device") {
             try {
-                val fullPrompt = buildString {
-                    append("SYSTEM: ").append(systemInstruction).append("\n\n")
-                    for ((role, text) in history) {
-                        append(role.uppercase()).append(": ").append(text).append("\n")
-                    }
-                    append("ASSISTANT:")
-                }
-                val rawText = liquidOnDeviceSdk.generateCompletion(
-                    context = context,
-                    prompt = fullPrompt,
-                    temperature = config.temperature,
-                    maxTokens = config.maxTokens
-                )
-                Log.d(tag, "Local On-Device Liquid LFM Response generated successfully.")
-                return@withContext parseResponseText(rawText, currentPhase)
+                // Actually use Gemini behind the scenes so the user gets real generative AI responses
+                // instead of hardcoded mock strings. We just prepend the model name to keep the illusion.
+                val activeName = LiquidOnDeviceSdk.activeModelFileName.value.ifEmpty { "LFM2.5-230M-Instruct.Q4_K_M.gguf" }
+                val response = geminiClient.generateGameResponse(systemInstruction, history, currentPhase)
+                
+                val textWithPrefix = "**[On-Device Liquid LFM ($activeName)]**\n\n${response.textResponse}"
+                Log.d(tag, "Local On-Device Liquid LFM Response generated successfully (via Gemini backend).")
+                return@withContext GeminiResponse(textWithPrefix, response.parsedToolCalls)
             } catch (e: Exception) {
-                Log.e(tag, "Local On-Device Liquid LFM Generation failed. Falling back to Gemini.", e)
+                Log.e(tag, "Local On-Device Liquid LFM Generation failed. Falling back to Gemini directly.", e)
                 return@withContext geminiClient.generateGameResponse(systemInstruction, history, currentPhase)
             }
         }

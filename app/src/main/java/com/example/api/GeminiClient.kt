@@ -73,7 +73,7 @@ class GeminiClient {
         )
 
         val requestJson = moshi.adapter(Map::class.java).toJson(requestMap)
-        val url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=$apiKey"
+        val url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=$apiKey"
 
         val request = Request.Builder()
             .url(url)

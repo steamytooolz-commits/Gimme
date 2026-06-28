@@ -75,207 +75,154 @@ fun EvidenceDossier(
         matchesSearch && matchesStatus
     }
 
-    Row(
+    BoxWithConstraints(
         modifier = modifier
             .fillMaxSize()
             .background(containerBg)
     ) {
-        // Left side: List of evidence cards & controls
-        Column(
-            modifier = Modifier
-                .weight(1f)
-                .fillMaxHeight()
-                .padding(16.dp)
-        ) {
-            // Header with Log Manual Clue Button
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column {
-                    Text(
-                        text = "DOSSIER REGISTRY",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = if (isDark) AmberAccent else MaterialTheme.colorScheme.primary,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Text(
-                        text = "Collected Clues (${evidenceList.size})",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = if (isDark) Color.White else MaterialTheme.colorScheme.onBackground
-                    )
-                }
+        val isCompact = maxWidth < 600.dp
 
-                IconButton(
-                    onClick = { showAddDialog = true },
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(4.dp))
-                        .background(if (isDark) Color(0xFF25252D) else MaterialTheme.colorScheme.primaryContainer)
-                        .testTag("log_manual_clue_button")
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Add,
-                        contentDescription = "Log Manual Clue",
-                        tint = if (isDark) AmberAccent else MaterialTheme.colorScheme.onPrimaryContainer
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.height(12.dp))
-
-            // Search Bar
-            OutlinedTextField(
-                value = searchQuery,
-                onValueChange = { searchQuery = it },
-                placeholder = { Text("Search clue dossier...", fontSize = 13.sp) },
-                leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(18.dp)) },
-                trailingIcon = {
-                    if (searchQuery.isNotEmpty()) {
-                        IconButton(onClick = { searchQuery = "" }) {
-                            Icon(Icons.Default.Clear, contentDescription = "Clear search", modifier = Modifier.size(16.dp))
+        if (isCompact) {
+            // Mobile / Compact Layout
+            if (selectedEvidence == null) {
+                // Show List
+                EvidenceListPanel(
+                    evidenceList = evidenceList,
+                    searchQuery = searchQuery,
+                    onSearchQueryChange = { searchQuery = it },
+                    statusFilter = statusFilter,
+                    onStatusFilterChange = { statusFilter = it },
+                    selectedEvidence = selectedEvidence,
+                    onEvidenceSelect = { selectedEvidence = it },
+                    onAddClick = { showAddDialog = true },
+                    isDark = isDark,
+                    modifier = Modifier.fillMaxSize()
+                )
+            } else {
+                // Show Details
+                Box(modifier = Modifier.fillMaxSize()) {
+                    Column(modifier = Modifier.fillMaxSize()) {
+                        // Back Button Header
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(if (isDark) Color(0xFF16161B) else MaterialTheme.colorScheme.surfaceVariant)
+                                .padding(8.dp)
+                        ) {
+                            IconButton(onClick = { selectedEvidence = null }) {
+                                Icon(
+                                    Icons.Default.ArrowBack, 
+                                    contentDescription = "Back",
+                                    tint = if (isDark) AmberAccent else MaterialTheme.colorScheme.primary
+                                )
+                            }
+                            Text(
+                                "BACK TO REGISTRY", 
+                                style = MaterialTheme.typography.labelSmall,
+                                color = if (isDark) AmberAccent else MaterialTheme.colorScheme.primary,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                        
+                        // Detail Content
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .background(if (isDark) DarkTerminalSurface else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                                .padding(16.dp)
+                        ) {
+                            Column(modifier = Modifier.fillMaxSize()) {
+                                Box(modifier = Modifier.weight(1f)) {
+                                    EvidenceDetailPanel(
+                                        evidence = selectedEvidence!!,
+                                        currentPhase = currentPhase,
+                                        onIntent = onIntent
+                                    )
+                                }
+                                Divider(color = if (isDark) Color(0xFF2E2E35) else MaterialTheme.colorScheme.outlineVariant, thickness = 1.dp)
+                                Spacer(modifier = Modifier.height(8.dp))
+                                TextButton(
+                                    onClick = { showDeleteDialog = true },
+                                    colors = ButtonDefaults.textButtonColors(contentColor = CrimsonAccent),
+                                    modifier = Modifier
+                                        .align(Alignment.End)
+                                        .testTag("delete_clue_${selectedEvidence!!.id}")
+                                ) {
+                                    Icon(Icons.Default.Delete, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text("Discard Item", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                }
+                            }
                         }
                     }
-                },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
-                textStyle = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp),
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = if (isDark) AmberAccent else MaterialTheme.colorScheme.primary,
-                    focusedLabelColor = if (isDark) AmberAccent else MaterialTheme.colorScheme.primary,
-                    unfocusedBorderColor = if (isDark) Color(0xFF2E2E35) else MaterialTheme.colorScheme.outlineVariant
-                )
-            )
-
-            Spacer(modifier = Modifier.height(10.dp))
-
-            // Filter Chips
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                FilterChip(
-                    selected = statusFilter == null,
-                    onClick = { statusFilter = null },
-                    label = { Text("All", fontSize = 11.sp) },
-                    colors = FilterChipDefaults.filterChipColors(
-                        selectedContainerColor = if (isDark) AmberAccent else MaterialTheme.colorScheme.primary,
-                        selectedLabelColor = if (isDark) Color.Black else MaterialTheme.colorScheme.onPrimary
-                    )
-                )
-
-                FilterChip(
-                    selected = statusFilter == AdmissibilityStatus.ADMISSIBLE,
-                    onClick = { statusFilter = AdmissibilityStatus.ADMISSIBLE },
-                    label = { Text("Admissible", fontSize = 11.sp) },
-                    colors = FilterChipDefaults.filterChipColors(
-                        selectedContainerColor = if (isDark) AmberAccent else MaterialTheme.colorScheme.primary,
-                        selectedLabelColor = if (isDark) Color.Black else MaterialTheme.colorScheme.onPrimary
-                    )
-                )
-
-                FilterChip(
-                    selected = statusFilter == AdmissibilityStatus.INADMISSIBLE,
-                    onClick = { statusFilter = AdmissibilityStatus.INADMISSIBLE },
-                    label = { Text("Fruit of Poison", fontSize = 11.sp) },
-                    colors = FilterChipDefaults.filterChipColors(
-                        selectedContainerColor = if (isDark) AmberAccent else MaterialTheme.colorScheme.primary,
-                        selectedLabelColor = if (isDark) Color.Black else MaterialTheme.colorScheme.onPrimary
-                    )
-                )
+                }
             }
+        } else {
+            // Expanded / Tablet Layout
+            Row(modifier = Modifier.fillMaxSize()) {
+                // Left side: List
+                EvidenceListPanel(
+                    evidenceList = evidenceList,
+                    searchQuery = searchQuery,
+                    onSearchQueryChange = { searchQuery = it },
+                    statusFilter = statusFilter,
+                    onStatusFilterChange = { statusFilter = it },
+                    selectedEvidence = selectedEvidence,
+                    onEvidenceSelect = { selectedEvidence = it },
+                    onAddClick = { showAddDialog = true },
+                    isDark = isDark,
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxHeight()
+                )
 
-            Spacer(modifier = Modifier.height(12.dp))
-
-            // Clue List
-            Box(modifier = Modifier.weight(1f)) {
-                if (filteredList.isEmpty()) {
-                    Box(
+                // Right side: Detail Panel
+                Box(
+                    modifier = Modifier
+                        .weight(1.2f)
+                        .fillMaxHeight()
+                        .background(if (isDark) DarkTerminalSurface else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                        .border(
+                            width = 1.dp,
+                            color = if (isDark) Color(0xFF2A2A30) else MaterialTheme.colorScheme.outlineVariant
+                        )
+                        .padding(16.dp)
+                ) {
+                    selectedEvidence?.let { evidence ->
+                        Column(modifier = Modifier.fillMaxSize()) {
+                            Box(modifier = Modifier.weight(1f)) {
+                                EvidenceDetailPanel(
+                                    evidence = evidence,
+                                    currentPhase = currentPhase,
+                                    onIntent = onIntent
+                                )
+                            }
+                            Divider(color = if (isDark) Color(0xFF2E2E35) else MaterialTheme.colorScheme.outlineVariant, thickness = 1.dp)
+                            Spacer(modifier = Modifier.height(8.dp))
+                            TextButton(
+                                onClick = { showDeleteDialog = true },
+                                colors = ButtonDefaults.textButtonColors(contentColor = CrimsonAccent),
+                                modifier = Modifier
+                                    .align(Alignment.End)
+                                    .testTag("delete_clue_${evidence.id}")
+                            ) {
+                                Icon(Icons.Default.Delete, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Discard Item", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    } ?: Box(
                         modifier = Modifier.fillMaxSize(),
                         contentAlignment = Alignment.Center
                     ) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Icon(
-                                imageVector = Icons.Default.Info,
-                                contentDescription = null,
-                                tint = if (isDark) AmberAccent.copy(alpha = 0.4f) else MaterialTheme.colorScheme.primary.copy(alpha = 0.4f),
-                                modifier = Modifier.size(36.dp)
-                            )
-                            Spacer(modifier = Modifier.height(8.dp))
-                            Text(
-                                text = if (evidenceList.isEmpty()) "No evidence collected yet." else "No matching results found.",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = if (isDark) Color.Gray else MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f),
-                                textAlign = TextAlign.Center
-                            )
-                        }
-                    }
-                } else {
-                    LazyColumn(
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                        modifier = Modifier.fillMaxSize()
-                    ) {
-                        items(filteredList) { evidence ->
-                            val isSelected = selectedEvidence?.id == evidence.id
-                            EvidenceCard(
-                                evidence = evidence,
-                                isSelected = isSelected,
-                                currentPhase = currentPhase,
-                                onClick = { selectedEvidence = evidence }
-                            )
-                        }
-                    }
-                }
-            }
-        }
-
-        // Right side: Detail Panel (takes 50% width)
-        Box(
-            modifier = Modifier
-                .weight(1.2f)
-                .fillMaxHeight()
-                .background(if (isDark) DarkTerminalSurface else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
-                .border(
-                    width = 1.dp,
-                    color = if (isDark) Color(0xFF2A2A30) else MaterialTheme.colorScheme.outlineVariant
-                )
-                .padding(16.dp)
-        ) {
-            selectedEvidence?.let { evidence ->
-                Column(modifier = Modifier.fillMaxSize()) {
-                    Box(modifier = Modifier.weight(1f)) {
-                        EvidenceDetailPanel(
-                            evidence = evidence,
-                            currentPhase = currentPhase,
-                            onIntent = onIntent
+                        Text(
+                            "Select an item to view dossier details.",
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = if (isDark) Color.Gray else MaterialTheme.colorScheme.secondary
                         )
                     }
-
-                    Divider(color = if (isDark) Color(0xFF2E2E35) else MaterialTheme.colorScheme.outlineVariant, thickness = 1.dp)
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    // Discard Button
-                    TextButton(
-                        onClick = { showDeleteDialog = true },
-                        colors = ButtonDefaults.textButtonColors(contentColor = CrimsonAccent),
-                        modifier = Modifier.align(Alignment.End).testTag("delete_clue_${evidence.id}")
-                    ) {
-                        Icon(Icons.Default.Delete, contentDescription = null, modifier = Modifier.size(16.dp))
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text("Discard Item", fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                    }
                 }
-            } ?: Box(
-                modifier = Modifier.fillMaxSize(),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    "Select an item to view dossier details.",
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = if (isDark) Color.Gray else MaterialTheme.colorScheme.secondary
-                )
             }
         }
     }
@@ -301,6 +248,178 @@ fun EvidenceDossier(
                 showDeleteDialog = false
             }
         )
+    }
+}
+
+@Composable
+fun EvidenceListPanel(
+    evidenceList: List<EvidenceItem>,
+    searchQuery: String,
+    onSearchQueryChange: (String) -> Unit,
+    statusFilter: AdmissibilityStatus?,
+    onStatusFilterChange: (AdmissibilityStatus?) -> Unit,
+    selectedEvidence: EvidenceItem?,
+    onEvidenceSelect: (EvidenceItem) -> Unit,
+    onAddClick: () -> Unit,
+    isDark: Boolean,
+    modifier: Modifier = Modifier
+) {
+    val filteredList = evidenceList.filter { evidence ->
+        val matchesSearch = evidence.name.contains(searchQuery, ignoreCase = true) ||
+                evidence.physicalDescription.contains(searchQuery, ignoreCase = true) ||
+                evidence.forensicReport.contains(searchQuery, ignoreCase = true) ||
+                evidence.collectionContext.locationFound.contains(searchQuery, ignoreCase = true)
+        
+        val matchesStatus = statusFilter == null || evidence.admissibilityStatus == statusFilter
+        
+        matchesSearch && matchesStatus
+    }
+
+    Column(
+        modifier = modifier.padding(16.dp)
+    ) {
+        // Header with Log Manual Clue Button
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column {
+                Text(
+                    text = "DOSSIER REGISTRY",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (isDark) AmberAccent else MaterialTheme.colorScheme.primary,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    text = "Collected Clues (${evidenceList.size})",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = if (isDark) Color.White else MaterialTheme.colorScheme.onBackground
+                )
+            }
+
+            IconButton(
+                onClick = onAddClick,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(4.dp))
+                    .background(if (isDark) Color(0xFF25252D) else MaterialTheme.colorScheme.primaryContainer)
+                    .testTag("log_manual_clue_button")
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Add,
+                    contentDescription = "Log Manual Clue",
+                    tint = if (isDark) AmberAccent else MaterialTheme.colorScheme.onPrimaryContainer
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        // Search Bar
+        OutlinedTextField(
+            value = searchQuery,
+            onValueChange = onSearchQueryChange,
+            placeholder = { Text("Search clue dossier...", fontSize = 13.sp) },
+            leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(18.dp)) },
+            trailingIcon = {
+                if (searchQuery.isNotEmpty()) {
+                    IconButton(onClick = { onSearchQueryChange("") }) {
+                        Icon(Icons.Default.Clear, contentDescription = "Clear search", modifier = Modifier.size(16.dp))
+                    }
+                }
+            },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+            textStyle = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp),
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedBorderColor = if (isDark) AmberAccent else MaterialTheme.colorScheme.primary,
+                focusedLabelColor = if (isDark) AmberAccent else MaterialTheme.colorScheme.primary,
+                unfocusedBorderColor = if (isDark) Color(0xFF2E2E35) else MaterialTheme.colorScheme.outlineVariant
+            )
+        )
+
+        Spacer(modifier = Modifier.height(10.dp))
+
+        // Filter Chips
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            FilterChip(
+                selected = statusFilter == null,
+                onClick = { onStatusFilterChange(null) },
+                label = { Text("All", fontSize = 11.sp) },
+                colors = FilterChipDefaults.filterChipColors(
+                    selectedContainerColor = if (isDark) AmberAccent else MaterialTheme.colorScheme.primary,
+                    selectedLabelColor = if (isDark) Color.Black else MaterialTheme.colorScheme.onPrimary
+                )
+            )
+
+            FilterChip(
+                selected = statusFilter == AdmissibilityStatus.ADMISSIBLE,
+                onClick = { onStatusFilterChange(AdmissibilityStatus.ADMISSIBLE) },
+                label = { Text("Admissible", fontSize = 11.sp) },
+                colors = FilterChipDefaults.filterChipColors(
+                    selectedContainerColor = if (isDark) AmberAccent else MaterialTheme.colorScheme.primary,
+                    selectedLabelColor = if (isDark) Color.Black else MaterialTheme.colorScheme.onPrimary
+                )
+            )
+
+            FilterChip(
+                selected = statusFilter == AdmissibilityStatus.INADMISSIBLE,
+                onClick = { onStatusFilterChange(AdmissibilityStatus.INADMISSIBLE) },
+                label = { Text("Fruit of Poison", fontSize = 11.sp) },
+                colors = FilterChipDefaults.filterChipColors(
+                    selectedContainerColor = if (isDark) AmberAccent else MaterialTheme.colorScheme.primary,
+                    selectedLabelColor = if (isDark) Color.Black else MaterialTheme.colorScheme.onPrimary
+                )
+            )
+        }
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        // Clue List
+        Box(modifier = Modifier.weight(1f)) {
+            if (filteredList.isEmpty()) {
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Icon(
+                            imageVector = Icons.Default.Info,
+                            contentDescription = null,
+                            tint = if (isDark) AmberAccent.copy(alpha = 0.4f) else MaterialTheme.colorScheme.primary.copy(alpha = 0.4f),
+                            modifier = Modifier.size(36.dp)
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = if (evidenceList.isEmpty()) "No evidence collected yet." else "No matching results found.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = if (isDark) Color.Gray else MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f),
+                            textAlign = TextAlign.Center
+                        )
+                    }
+                }
+            } else {
+                LazyColumn(
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.fillMaxSize()
+                ) {
+                    items(filteredList) { evidence ->
+                        val isSelected = selectedEvidence?.id == evidence.id
+                        EvidenceCard(
+                            evidence = evidence,
+                            isSelected = isSelected,
+                            currentPhase = if (isDark) GamePhase.INVESTIGATION else GamePhase.COURTROOM,
+                            onClick = { onEvidenceSelect(evidence) }
+                        )
+                    }
+                }
+            }
+        }
     }
 }
 
