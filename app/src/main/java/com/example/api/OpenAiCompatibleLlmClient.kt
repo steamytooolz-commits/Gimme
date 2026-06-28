@@ -30,7 +30,7 @@ class OpenAiChatRequest(
     val stream: Boolean
 )
 
-class OpenAiCompatibleLlmClient : LlmClient {
+class OpenAiCompatibleLlmClient(private val context: android.content.Context? = null) : LlmClient {
 
     private val tag = "OpenAiLlmClient"
     
@@ -66,7 +66,7 @@ class OpenAiCompatibleLlmClient : LlmClient {
                     }
                     append("ASSISTANT:")
                 }
-                liquidOnDeviceSdk.streamCompletion(fullPrompt).collect { chunk ->
+                liquidOnDeviceSdk.streamCompletion(context, fullPrompt).collect { chunk ->
                     emit(LlmStreamEvent.ContentChunk(chunk))
                 }
                 emit(LlmStreamEvent.StreamEnd)
@@ -249,6 +249,7 @@ class OpenAiCompatibleLlmClient : LlmClient {
                     append("ASSISTANT:")
                 }
                 val rawText = liquidOnDeviceSdk.generateCompletion(
+                    context = context,
                     prompt = fullPrompt,
                     temperature = config.temperature,
                     maxTokens = config.maxTokens

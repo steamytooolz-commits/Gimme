@@ -28,11 +28,13 @@ class MainActivity : ComponentActivity() {
     private lateinit var database: ThemisDatabase
     private lateinit var repository: GameRepository
     private lateinit var secureStorageRepository: SecureStorageRepositoryImpl
-    private val llmClient = OpenAiCompatibleLlmClient()
+    private lateinit var llmClient: OpenAiCompatibleLlmClient
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+
+        llmClient = OpenAiCompatibleLlmClient(applicationContext)
 
         // Initialize Google Mobile Ads SDK
         try {
